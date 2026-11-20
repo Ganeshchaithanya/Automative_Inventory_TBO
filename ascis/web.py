@@ -71,6 +71,7 @@ class Scenario(BaseModel):
     evidence_state: EvidenceState = "current"
     budget: int = Field(ge=0, le=3_000_000)
     downside_limit: int = Field(ge=0, le=600_000)
+    queue_for_review: bool = False
 
 
 @dataclass
@@ -98,6 +99,7 @@ def prepare_ledger():
             connection.execute("INSERT OR IGNORE INTO demo_session VALUES (1, 0)")
             connection.execute("CREATE TABLE IF NOT EXISTS demo_event (id TEXT PRIMARY KEY, title TEXT NOT NULL)")
             connection.execute("CREATE TABLE IF NOT EXISTS agent_decline (id TEXT PRIMARY KEY)")
+            connection.execute("CREATE TABLE IF NOT EXISTS scenario_review (id TEXT PRIMARY KEY, inputs TEXT NOT NULL)")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS demo_booking "
                 "(id TEXT PRIMARY KEY, request TEXT NOT NULL, receipt TEXT NOT NULL)"
@@ -193,17 +195,13 @@ def run_scenario(body: Scenario):
     if body.event_id in read_declined_markets():
         raise HTTPException(409, "This event allocation was declined and is no longer an active scenario.")
     model, demand, configured, training = app.state.checkpoint
-    company = replace(configured, budget=body.budget, downside_limit=body.downside_limit)
+    company = scenario_policy(configured, body)
     at_deadline = body.phase == "deadline"
     day = -10 if at_deadline else -60
     position = Position()
     if at_deadline:
         position = apply_position(position, candidate_actions(-60)[Action.HOLD_300_PLUS_300])
-    observation = replace(
-        bengaluru(volatile=body.volatile).opening, event=event["title"],
-        day=day, signal=body.signal, searches=int(250 + 280 * max(0, body.signal)),
-        volatile=body.volatile, quote_verified=body.quote_verified,
-    )
+    observation = scenario_observation(body, event["title"], day)
     evidence = supplier_evidence(day, observation.quote_verified, body.evidence_state)
     analysis, action, actor_ran, market_trigger = assess_decision(
         model, demand, company, observation, position, evidence, offer=body.offer,
@@ -215,19 +213,23 @@ def run_scenario(body: Scenario):
         name: result["calibrated"][validation_group]
         for name, result in training.get("forecast_evaluation", {}).items()
     }
+    review_status = None
+    if body.queue_for_review and not at_deadline and analysis.candidates[action].units:
+        review_status = queue_scenario(body, event, observation, analysis, action, company)
     return {
         "event_id": event["id"], "event": event["title"], "market": event["destination"],
         "phase": body.phase, "trigger": market_trigger,
         "signal": body.signal, "volatile": body.volatile, "quote_verified": evidence["eligible"],
         "supplier_evidence": evidence,
         "existing_room_nights": assessment["existing_room_nights"],
-        "option_open": position.option_open, "cash_headroom": body.budget - position.committed_cash,
+        "option_open": position.option_open, "cash_headroom": company.budget - position.committed_cash,
         "forecast": assessment["forecast_room_nights"], "forecast_skill": assessment["domain_skills"][1],
         "selected_action": action.name, "actor_ran": actor_ran,
         "candidates": assessment["counterfactuals"], "fit": training.get("fit", {}),
         "forecast_validation": validation,
         "workflow": assessment["workflow_router"],
         "skill_reviews": skills.assess(observation, analysis) if skills else [],
+        "review_status": review_status,
     }
 
 
@@ -250,7 +252,7 @@ async def collect_market_evidence(app: FastAPI):
 
     async with anyio.create_task_group() as jobs:
         for event in EVENTS:
-            if event["id"] in HOTELS:
+            if event["id"] in HOTELS and event["url"]:
                 jobs.start_soon(collect, event)
 
 
@@ -280,11 +282,17 @@ def assess_decision(
     return analysis, action, actor_ran, market_trigger
 
 
-def decision(run_id: str, event: dict, observation: Observation, position: Position, version: int, trace: list[dict]):
+def decision(
+    run_id: str, event: dict, observation: Observation, position: Position, version: int, trace: list[dict],
+    *, scenario: Scenario | None = None,
+):
     model, demand, company, _ = app.state.checkpoint
-    evidence = supplier_evidence(observation.day, observation.quote_verified)
+    if scenario:
+        company = scenario_policy(company, scenario)
+    evidence = supplier_evidence(observation.day, observation.quote_verified, scenario.evidence_state if scenario else "current")
     analysis, action, _, _ = assess_decision(
         model, demand, company, observation, position, evidence, report_version=version,
+        offer=scenario.offer if scenario else "hotel",
     )
     skills = getattr(app.state, "skills", None)
     if skills:
@@ -326,21 +334,65 @@ def read_declined_markets() -> set[str]:
         return declined_markets(connection)
 
 
+def scenario_policy(company, body: Scenario):
+    return replace(company, budget=min(company.budget, body.budget),
+                   downside_limit=min(company.downside_limit, body.downside_limit))
+
+
+def scenario_observation(body: Scenario, identifier: str, day: int) -> Observation:
+    return replace(
+        bengaluru(volatile=body.volatile).opening, event=identifier, day=day, signal=body.signal,
+        searches=int(250 + 280 * max(0, body.signal)), volatile=body.volatile, quote_verified=body.quote_verified,
+    )
+
+
+def queue_scenario(body: Scenario, event: dict, observation: Observation, analysis: Analysis, action: Action, company):
+    with LOCK, closing(sqlite3.connect(LEDGER)) as connection, connection:
+        connection.execute("BEGIN IMMEDIATE")
+        identifier = opening_id(event["id"], demo_revision(connection))
+        if connection.execute("SELECT 1 FROM agent_decline WHERE id = ?", (identifier,)).fetchone():
+            return "declined"
+        if connection.execute("SELECT 1 FROM execution WHERE event = ? AND day = -60", (identifier,)).fetchone():
+            return "already approved"
+        if identifier in ACTIVE:
+            return "existing request"
+        observation = replace(observation, event=identifier)
+        report = {**analysis.report, "event": identifier}
+        analysis = replace(analysis, report=report)
+        requested = proposal(analysis, action, company)
+        connection.execute("INSERT OR IGNORE INTO demo_event VALUES (?, ?)", (identifier, event["title"]))
+        connection.execute("INSERT INTO scenario_review VALUES (?, ?)", (identifier, body.model_dump_json()))
+        run = DecisionRun(identifier, event, observation, Position(), analysis, action, requested, "awaiting approval", [
+            {"day": observation.day, "action": action.name, "status": "awaiting approval"},
+        ])
+        connection.commit()
+        ACTIVE[identifier] = run
+        return "queued"
+
+
 def opening_runs(connection: sqlite3.Connection, skip: set[str]) -> dict[str, DecisionRun]:
     revision = demo_revision(connection)
     runs = {}
+    saved = dict(connection.execute("SELECT id, inputs FROM scenario_review"))
     for event in EVENTS:
         if event["id"] not in HOTELS:
             continue
         identifier = opening_id(event["id"], revision)
         if identifier in skip:
             continue
-        signal = event["signal"] + attendance_adjustment(event["id"])
-        observation = replace(
-            bengaluru(volatile=False).opening, event=identifier, signal=signal,
-            searches=int(250 + 280 * signal), quote_verified=True,
-        )
-        run = decision(identifier, event, observation, Position(), 1, [])
+        if identifier in saved:
+            body = Scenario.model_validate_json(saved[identifier])
+            observation = scenario_observation(body, identifier, -60)
+            run = decision(identifier, event, observation, Position(), 1, [], scenario=body)
+        elif event["url"]:
+            signal = event["signal"] + attendance_adjustment(event["id"])
+            observation = replace(
+                bengaluru(volatile=False).opening, event=identifier, signal=signal,
+                searches=int(250 + 280 * signal), quote_verified=True,
+            )
+            run = decision(identifier, event, observation, Position(), 1, [])
+        else:
+            continue
         if run.proposal:
             connection.execute("INSERT OR IGNORE INTO demo_event VALUES (?, ?)", (identifier, event["title"]))
             runs[identifier] = run
@@ -372,7 +424,7 @@ def demo_status():
             "providers": result.get("providers", {}),
             "sources": len(result.get("sources", [])),
         }
-        for event in EVENTS if event["id"] in HOTELS
+        for event in EVENTS if event["id"] in HOTELS and event["url"]
         for result in [results.get(event["id"], {})]
     ]
     return {
@@ -392,6 +444,7 @@ def reset_demo(body: ResetDemo):
             connection.execute("DELETE FROM demo_booking")
             connection.execute("DELETE FROM option_review")
             connection.execute("DELETE FROM agent_decline")
+            connection.execute("DELETE FROM scenario_review")
             connection.execute("DELETE FROM execution")
             connection.execute("DELETE FROM demo_event")
             connection.execute("UPDATE demo_session SET revision = revision + 1 WHERE id = 1")
@@ -408,11 +461,12 @@ def review_due_options(now: float | None = None):
     with LOCK, closing(sqlite3.connect(LEDGER)) as connection, connection:
         markets = {opening_id(event["id"], demo_revision(connection)): event for event in EVENTS}
         due = connection.execute(
-            "SELECT option_review.event, execution.receipt FROM option_review "
+            "SELECT option_review.event, execution.receipt, scenario_review.inputs FROM option_review "
             "JOIN execution ON execution.event = option_review.event AND execution.day = -60 "
+            "LEFT JOIN scenario_review ON scenario_review.id = option_review.event "
             "WHERE option_review.outcome IS NULL AND due_at <= ?", (cutoff,),
         ).fetchall()
-        for identifier, receipt in due:
+        for identifier, receipt, inputs in due:
             if identifier in ACTIVE and ACTIVE[identifier].observation.day == -10:
                 continue
             event = markets.get(identifier)
@@ -421,14 +475,16 @@ def review_due_options(now: float | None = None):
             position = Position(**json.loads(receipt)["position"])
             if not position.option_open:
                 continue
-            volatile = event["id"] in VOLATILE_MARKETS
-            signal = 0.35 if volatile else min(1.15, event["signal"] + 0.12)
+            scenario = Scenario.model_validate_json(inputs) if inputs else None
+            volatile = scenario.volatile if scenario else event["id"] in VOLATILE_MARKETS
+            opening_signal = scenario.signal if scenario else event["signal"]
+            signal = min(0.35, opening_signal) if volatile else min(1.15, opening_signal + 0.12)
             observation = replace(
                 bengaluru(volatile=volatile).deadline, event=identifier, signal=signal,
                 searches=int(250 + 280 * signal), quote_verified=True,
             )
             trace = ACTIVE[identifier].trace if identifier in ACTIVE else []
-            run = decision(identifier, event, observation, position, 2, trace)
+            run = decision(identifier, event, observation, position, 2, trace, scenario=scenario)
             if not run.proposal:
                 run.position = replace(position, option_open=False)
                 connection.execute(
@@ -680,7 +736,7 @@ def impact():
                     "discovery_state": "checking", "as_of": None, "facts": curated_context(event),
                 },
                 "event_date": event["date"], "event_source": event["url"],
-                "history": HISTORY[hotel["id"]], "real_hotels": PROPERTIES[hotel["id"]],
+                "history": HISTORY.get(hotel["id"], ()), "real_hotels": PROPERTIES.get(hotel["id"], ()),
                 "live_hotels": getattr(app.state, "live_hotels", {}).get(hotel["id"], {
                     "status": "Checking event sources and live provider configuration.", "offers": [],
                 }),

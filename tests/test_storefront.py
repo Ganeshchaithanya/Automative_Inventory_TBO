@@ -23,6 +23,37 @@ class OfferPolicy:
 
 
 class StorefrontTests(unittest.TestCase):
+    def test_bengaluru_selection_survives_restart_and_only_publishes_after_approval(self):
+        demand, _ = fit_demand()
+        checkpoint = (OfferPolicy(), demand, CompanyPolicy(), {})
+        with (
+            tempfile.TemporaryDirectory() as temporary,
+            patch.object(web, "LEDGER", Path(temporary) / "scenario.sqlite"),
+            patch.object(web, "ACTIVE", {}),
+            patch.object(web.app.state, "checkpoint", checkpoint, create=True),
+        ):
+            web.prepare_ledger()
+            inputs = web.Scenario(
+                event_id="blr", phase="opening", signal=0.78, volatile=False, quote_verified=True,
+                budget=3_000_000, downside_limit=600_000, queue_for_review=True,
+            )
+            self.assertIsNone(web.run_scenario(inputs.model_copy(update={"signal": 0.05}))["review_status"])
+            self.assertEqual(web.run_scenario(inputs)["review_status"], "queued")
+            self.assertEqual(web.run_scenario(inputs)["review_status"], "existing request")
+            initial, = web.agent_requests()
+            self.assertNotIn("blr", {hotel["id"] for hotel in web.catalog()})
+            web.ACTIVE.clear()
+            web.prepare_agent_requests()
+            restored = next(request for request in web.agent_requests() if request["id"] == initial["id"])
+            self.assertEqual(restored["proposal"]["id"], initial["proposal"]["id"])
+            self.assertTrue(web.review_pdf(restored["id"], restored["proposal"]["id"]).body.startswith(b"%PDF"))
+            web.approve(restored["id"], web.Approval(
+                proposal_id=restored["proposal"]["id"], acknowledge_simulation=True,
+            ))
+            hotel = next(hotel for hotel in web.catalog() if hotel["id"] == "blr")
+            self.assertEqual(hotel["featured_stock"], 300)
+            self.assertEqual(web.run_scenario(inputs)["review_status"], "already approved")
+
     def test_promotion_time_rewards_demand_and_remaining_cost(self):
         self.assertEqual(promotion_seconds(0, 0, 0), 5)
         self.assertGreater(promotion_seconds(1.15, 0, 0), promotion_seconds(0.3, 0, 0))

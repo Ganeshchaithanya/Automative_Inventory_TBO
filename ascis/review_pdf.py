@@ -83,9 +83,13 @@ def procurement_review(*, event, hotel, proposal, forecast, assessment, status) 
              "The model is fitted on synthetic censored bookings. Organizer attendance supplies market context."),
         para(f"Expected incremental contribution: {inr(assessment['expected_profit'])}. "
              f"Modeled 90% downside CVaR: {inr(assessment['downside_cvar90'])}."),
-        Spacer(1, 7), source("Organizer announcement", event["url"]),
+        Spacer(1, 7),
     ]
-    for row in HISTORY[event["id"]]:
+    if event["url"]:
+        contents.append(source("Organizer announcement", event["url"]))
+    else:
+        contents.append(para("Synthetic event and dates supplied by Scenario Lab.", muted))
+    for row in HISTORY.get(event["id"], ()):
         contents.append(source(f"{row['edition']} | {row['count']:,} {row['metric'].lower()}", row["url"]))
     contents.extend([
         Spacer(1, 13), para("Human approval", heading),

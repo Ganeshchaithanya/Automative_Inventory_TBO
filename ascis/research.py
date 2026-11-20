@@ -24,7 +24,7 @@ EVENTS = (
      "publisher": "Expo 2027 Belgrade",
      "url": "https://expobelgrade2027.org/en/experience/programme"},
     {"id": "blr", "title": "Bengaluru cricket final", "destination": "Bengaluru, India",
-     "date": None, "category": "Synthetic replay", "signal": 0.78, "query": "Bengaluru cricket travel",
+     "date": "2027-04-18", "category": "Synthetic replay", "signal": 0.78, "query": "Bengaluru cricket travel",
      "publisher": None, "url": None},
 )
 

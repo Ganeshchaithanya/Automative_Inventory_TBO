@@ -43,7 +43,7 @@ Open [the storefront](http://127.0.0.1:8080) to browse current demo stock by des
 
 Open [the operations demo](http://127.0.0.1:8083/) for the model and inventory impact view or [the approval inbox](http://127.0.0.1:8083/approvals) to review the agent’s requests. The two sites share a local SQLite ledger under `runs/`. On startup, the trained checkpoint evaluates the demo markets and queues proposals that require approval. Each proposal has a downloadable PDF bound to its exact terms. Accepting adds the firm quantity to the storefront. Declining leaves stock as-is.
 
-Use [Scenario Lab](http://127.0.0.1:8083/scenarios) for what-if runs. Start with a stable market, volatile deadline, tight budget or routine demand, then change the event, timing, demand, cash, risk limit and quote verification. The lab calls the trained checkpoint and displays the forecast interval, candidate constraints and selected action. It runs independently of the booking and approval ledger.
+Use [Scenario Lab](http://127.0.0.1:8083/scenarios) to change the event, timing, demand, cash, risk limit and quote verification. Selecting a market or clicking **Run scenario** sends an eligible opening allocation to the Approval Inbox. Presets and hypothetical deadline simulations are previews. A queued request stays pending until reviewed. Bengaluru appears in the storefront after its first firm allocation is approved.
 
 **Reset demo** on the operations site clears simulated bookings, sales, procurement approvals, declines, and option activity after confirmation. It restores the seeded catalog and opens a new set of proposals. Open demo pages refresh to the new revision. The trained checkpoint, source configuration and exported PDFs are files outside the demo ledger.
 

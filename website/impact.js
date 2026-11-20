@@ -55,7 +55,7 @@ function render() {
 
   const evidence = section("Event and historical evidence");
   const intro = node("p", market.destination + " · " + market.event_date + " · ");
-  intro.append(link("Organizer announcement", market.event_source));
+  intro.append(market.event_source ? link("Organizer announcement", market.event_source) : document.createTextNode("Simulated event"));
   evidence.append(intro);
   const record = market.evidence;
   if (record.as_of) evidence.append(node("p", "Research checked " + new Date(record.as_of).toLocaleString() +

@@ -12,6 +12,7 @@ const actions = {
 let settings;
 let previous;
 let refreshingSettings = false;
+let latestRun = 0;
 
 function node(tag, text, className) {
   const item = document.createElement(tag);
@@ -121,6 +122,19 @@ function render(data) {
     evidence.eligible ? "MONITORING DECISION" : "EVIDENCE REVIEW", "eyebrow"));
   verdict.append(node("h2", actions[data.selected_action]));
   verdict.append(node("p", data.event + " · " + data.market));
+  const reviews = {
+    queued: "Allocation sent for human review.",
+    "existing request": "This market already has a request in the approval inbox.",
+    "already approved": "This market’s opening allocation has already been approved.",
+    declined: "This market’s opening allocation has been declined.",
+  };
+  if (data.review_status) {
+    const message = node("p", reviews[data.review_status] + " ");
+    const inbox = node("a", "Open Approval Inbox");
+    inbox.href = "/approvals";
+    message.append(inbox);
+    verdict.append(message);
+  }
   if (previous) {
     verdict.append(node("p", "Previous run: " + actions[previous.selected_action] +
       " · median forecast " + number.format(previous.forecast.p50) + " room-nights", "prior-run"));
@@ -166,7 +180,8 @@ function render(data) {
   previous = data;
 }
 
-async function run() {
+async function run(queueForReview = false) {
+  const generation = ++latestRun;
   const button = $("#run-scenario");
   button.disabled = true;
   button.textContent = "Running…";
@@ -177,6 +192,7 @@ async function run() {
     volatile: controls.volatile.checked, quote_verified: controls.quote_verified.checked,
     evidence_state: controls.evidence_state.value,
     budget: Number(controls.budget.value), downside_limit: Number(controls.downside_limit.value),
+    queue_for_review: queueForReview,
   };
   try {
     const response = await fetch("/api/scenarios", {
@@ -184,12 +200,14 @@ async function run() {
     });
     const data = await response.json();
     if (!response.ok) throw new Error(typeof data.detail === "string" ? data.detail : "Check the scenario inputs and try again.");
-    if (inputs.event_id === controls.event_id.value) render(data);
+    if (generation === latestRun && inputs.event_id === controls.event_id.value) render(data);
   } catch (error) {
-    $("#scenario-error").textContent = error.message;
+    if (generation === latestRun) $("#scenario-error").textContent = error.message;
   } finally {
-    button.disabled = false;
-    button.textContent = "Run scenario";
+    if (generation === latestRun) {
+      button.disabled = false;
+      button.textContent = "Run scenario";
+    }
   }
 }
 
@@ -199,11 +217,14 @@ controls.signal.addEventListener("input", () => {
 controls.phase.addEventListener("change", setPhaseHint);
 controls.event_id.addEventListener("change", () => {
   const market = settings?.events.find((event) => event.id === controls.event_id.value);
-  if (market) setSignal(market.signal);
+  if (market) {
+    setSignal(market.signal);
+    if (form.reportValidity()) run(true);
+  }
 });
 form.addEventListener("submit", (event) => {
   event.preventDefault();
-  run();
+  run(true);
 });
 
 async function refreshSettings() {
@@ -239,7 +260,7 @@ for (const button of document.querySelectorAll("[data-preset]")) {
   button.addEventListener("click", () => {
     if (!settings) return;
     setPreset(button.dataset.preset);
-    form.requestSubmit();
+    if (form.reportValidity()) run();
   });
 }
 

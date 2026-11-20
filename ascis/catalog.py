@@ -17,6 +17,9 @@ HOTELS = {
     "expo": {"name": "Danube Court", "area": "New Belgrade", "style": "Contemporary hotel",
              "amenities": ["Breakfast available", "Group-friendly"], "stock": 60,
              "description": "A contemporary address with generous social spaces for city breaks, groups and event travel."},
+    "blr": {"name": "Garden City Hotel", "area": "Central Bengaluru", "style": "City stay",
+            "amenities": ["Airport transfers", "Group-friendly"], "stock": 0,
+            "description": "A fictional Bengaluru stay for the simulated cricket final."},
 }
 TRANSFER_PRICE = 1_200
 TRANSFER_COST = 850
@@ -40,6 +43,8 @@ def listings(approved: dict[str, int], bookings: Sequence[dict] = ()) -> list[di
         if key not in HOTELS:
             continue
         hotel = HOTELS[key]
+        if not (hotel["stock"] or approved.get(event["title"])):
+            continue
         event_date = date.fromisoformat(event["date"])
         start, end = event_date - timedelta(days=3), event_date + timedelta(days=4)
         dates = dates_between(start, end)
@@ -62,8 +67,8 @@ def listings(approved: dict[str, int], bookings: Sequence[dict] = ()) -> list[di
             "available_from": start.isoformat(), "available_until": end.isoformat(),
             "rooms_by_date": rooms, "acquired_by_date": acquired, "transfers_by_date": transfers,
             "transfer_price": TRANSFER_PRICE,
-            "hotel_image": f"/assets/photo-{key}.jpg",
-            "city_image": f"/assets/city-{key}.jpg",
+            "hotel_image": f"/assets/photo-{key if key != 'blr' else 'expo'}.jpg",
+            "city_image": f"/assets/{'city-' + key if key != 'blr' else 'photo-expo'}.jpg",
         })
     return sorted(records, key=lambda hotel: hotel["featured_stock"], reverse=True)
 
