@@ -59,10 +59,14 @@ class Booking(BookingItem):
     demo_revision: int = Field(default=0, ge=0)
 
 
-class BookingCart(BaseModel):
-    request_id: UUID
+class CartSelection(BaseModel):
     demo_revision: int = Field(default=0, ge=0)
     items: list[BookingItem] = Field(min_length=1)
+
+
+class BookingCart(CartSelection):
+    request_id: UUID
+    expected_subtotal_inr: int | None = Field(default=None, ge=0)
 
 
 class ResetDemo(BaseModel):
@@ -721,13 +725,42 @@ def booking_details(hotel: dict, item: BookingItem) -> dict:
     return {**details, "reference": "DEMO-" + uuid4().hex[:8].upper(), "origin": item.origin.strip()}
 
 
+def price_cart(connection: sqlite3.Connection, body: CartSelection) -> list[dict]:
+    hotels = {hotel["id"]: hotel for hotel in listings(approved_stock(connection), booking_receipts(connection))}
+    quotes = []
+    for index, item in enumerate(body.items, start=1):
+        hotel = hotels.get(item.hotel_id)
+        if not hotel:
+            raise HTTPException(409, f"Cart item {index}: this property is no longer available.")
+        try:
+            quote = demo_quote(hotel, item.offer, item.check_in, item.check_out, item.rooms)
+        except ValueError as error:
+            raise HTTPException(409, f"Cart item {index} ({hotel['name']}): {error}") from error
+        consume_booking(hotel["rooms_by_date"], hotel["acquired_by_date"], hotel["transfers_by_date"], quote)
+        quotes.append(quote)
+    return quotes
+
+
+def require_cart_revision(connection: sqlite3.Connection, body: CartSelection) -> None:
+    if body.demo_revision != demo_revision(connection):
+        raise HTTPException(409, "The demo was reset. Rebuild your cart with the current inventory.")
+
+
+@storefront.post("/api/booking-carts/quote")
+def quote_cart(body: CartSelection):
+    with closing(sqlite3.connect(LEDGER)) as connection:
+        connection.execute("BEGIN")
+        require_cart_revision(connection, body)
+        quotes = price_cart(connection, body)
+    return {"subtotal_inr": sum(quote["subtotal_inr"] for quote in quotes), "items": len(quotes)}
+
+
 @storefront.post("/api/booking-carts")
 def book_cart(body: BookingCart):
     request_id = str(body.request_id)
     with LOCK, closing(sqlite3.connect(LEDGER)) as connection, connection:
         connection.execute("BEGIN IMMEDIATE")
-        if body.demo_revision != demo_revision(connection):
-            raise HTTPException(409, "The demo was reset. Rebuild your cart with the current inventory.")
+        require_cart_revision(connection, body)
         previous = connection.execute(
             "SELECT request, receipt FROM demo_booking_cart WHERE id = ?", (request_id,),
         ).fetchone()
@@ -735,17 +768,13 @@ def book_cart(body: BookingCart):
             if BookingCart.model_validate_json(previous[0]) != body:
                 raise HTTPException(409, "This cart request was already used.")
             return json.loads(previous[1])
-        hotels = {hotel["id"]: hotel for hotel in listings(approved_stock(connection), booking_receipts(connection))}
+        quotes = price_cart(connection, body)
+        subtotal = sum(quote["subtotal_inr"] for quote in quotes)
+        if body.expected_subtotal_inr is not None and body.expected_subtotal_inr != subtotal:
+            raise HTTPException(409, "The cart total changed. Review the updated total before confirming.")
         bookings = []
-        for index, item in enumerate(body.items, start=1):
-            hotel = hotels.get(item.hotel_id)
-            if not hotel:
-                raise HTTPException(409, f"Cart item {index}: this property is no longer available.")
-            try:
-                receipt = booking_details(hotel, item)
-            except HTTPException as error:
-                raise HTTPException(409, f"Cart item {index} ({hotel['name']}): {error.detail}") from error
-            consume_booking(hotel["rooms_by_date"], hotel["acquired_by_date"], hotel["transfers_by_date"], receipt)
+        for item, quote in zip(body.items, quotes, strict=True):
+            receipt = {**quote, "reference": "DEMO-" + uuid4().hex[:8].upper(), "origin": item.origin.strip()}
             line = Booking(**item.model_dump(), request_id=uuid4(), demo_revision=body.demo_revision)
             connection.execute(
                 "INSERT INTO demo_booking VALUES (?, ?, ?)",
@@ -756,7 +785,7 @@ def book_cart(body: BookingCart):
         confirmation = {
             "reference": "CART-" + body.request_id.hex[:12].upper(),
             "bookings": bookings,
-            "subtotal_inr": sum(booking["subtotal_inr"] for booking in bookings),
+            "subtotal_inr": subtotal,
         }
         connection.execute(
             "INSERT INTO demo_booking_cart VALUES (?, ?, ?)",

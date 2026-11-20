@@ -226,14 +226,31 @@ function renderCart() {
 
 async function confirmCart() {
   if (cartSending || $("#cart-checkout").disabled) return;
-  cart.pending ||= { request_id: crypto.randomUUID(), demo_revision: cart.revision, items: cart.items.map((item) => ({ ...item })) };
-  const request = cart.pending;
+  const currentCart = cart;
+  const headers = { "Content-Type": "application/json" };
   cartSending = true;
   $("#cart-message").textContent = "";
   saveCart();
   try {
+    if (!currentCart.pending) {
+      const selection = {
+        demo_revision: currentCart.revision,
+        items: currentCart.items.map((item) => ({ ...item })),
+      };
+      const response = await fetch("/api/booking-carts/quote", {
+        method: "POST", headers, body: JSON.stringify(selection),
+      });
+      const quote = await response.json();
+      if (cart !== currentCart) return;
+      if (!response.ok || !Number.isSafeInteger(quote.subtotal_inr)) {
+        throw new Error(typeof quote.detail === "string" ? quote.detail : "Could not check cart availability. Try again.");
+      }
+      currentCart.pending = { ...selection, request_id: crypto.randomUUID(), expected_subtotal_inr: quote.subtotal_inr };
+      saveCart();
+    }
+    const request = currentCart.pending;
     const response = await fetch("/api/booking-carts", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+      method: "POST", headers, body: JSON.stringify(request),
     });
     const result = await response.json();
     if (cart.pending !== request) return;
@@ -246,7 +263,7 @@ async function confirmCart() {
     cart.pending = null;
     cartReceipt = result;
   } catch (error) {
-    if (cart.revision === request.demo_revision) {
+    if (cart === currentCart) {
       $("#cart-message").textContent = cart.pending ? "Confirmation is uncertain. Retry this cart to recover the same result." : error.message;
     }
   } finally {

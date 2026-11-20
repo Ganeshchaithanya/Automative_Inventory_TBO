@@ -1,4 +1,4 @@
-const methods = { catalog: "GET", bookings: "POST", "booking-carts": "POST" };
+const methods = { catalog: "GET", bookings: "POST", "booking-carts": "POST", "cart-quote": "POST" };
 
 export default async function handler(request, response) {
   const resource = request.query.resource;
@@ -15,7 +15,8 @@ export default async function handler(request, response) {
   try {
     const origin = new URL(process.env.ASCIS_OPERATIONS_URL);
     const booking = request.method === "POST";
-    const upstream = await fetch(new URL("/api/" + resource, origin), {
+    const path = resource === "cart-quote" ? "booking-carts/quote" : resource;
+    const upstream = await fetch(new URL("/api/" + path, origin), {
       method: request.method,
       headers: booking ? { "Content-Type": "application/json" } : undefined,
       body: booking ? typeof request.body === "string" ? request.body : JSON.stringify(request.body) : undefined,

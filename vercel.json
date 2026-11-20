@@ -6,6 +6,7 @@
   "rewrites": [
     { "source": "/api/catalog", "destination": "/api/storefront/route?resource=catalog" },
     { "source": "/api/bookings", "destination": "/api/storefront/route?resource=bookings" },
-    { "source": "/api/booking-carts", "destination": "/api/storefront/route?resource=booking-carts" }
+    { "source": "/api/booking-carts", "destination": "/api/storefront/route?resource=booking-carts" },
+    { "source": "/api/booking-carts/quote", "destination": "/api/storefront/route?resource=cart-quote" }
   ]
 }

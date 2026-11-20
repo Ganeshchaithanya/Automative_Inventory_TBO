@@ -24,6 +24,28 @@ class OfferPolicy:
 
 
 class StorefrontTests(unittest.TestCase):
+    def test_cart_quote_never_reserves_and_checkout_rechecks_stock_and_price(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(web, "LEDGER", Path(directory) / "quote.sqlite"):
+            web.prepare_ledger()
+            hotel = next(item for item in web.catalog() if item["id"] == "icc")
+            first, second = map(date.fromisoformat, sorted(hotel["rooms_by_date"])[:2])
+            group = web.BookingItem(hotel_id="icc", offer="package", check_in=first, check_out=second, rooms=15)
+            selection = web.CartSelection(items=[group])
+            quote = web.quote_cart(selection)
+            self.assertEqual(quote, {"subtotal_inr": 78_000, "items": 1})
+            self.assertEqual(web.catalog()[0]["rooms_by_date"], hotel["rooms_by_date"])
+            request = web.BookingCart(request_id=uuid4(), items=[group], expected_subtotal_inr=77_999)
+            with self.assertRaisesRegex(HTTPException, "cart total changed"):
+                web.book_cart(request)
+            self.assertEqual(web.catalog()[0]["rooms_by_date"], hotel["rooms_by_date"])
+
+            web.book(web.Booking(
+                **group.model_copy(update={"rooms": 4}).model_dump(), request_id=uuid4(),
+            ))
+            with self.assertRaisesRegex(HTTPException, "Cart item 1.*14 rooms"):
+                web.book_cart(request.model_copy(update={"expected_subtotal_inr": quote["subtotal_inr"]}))
+            self.assertEqual(web.catalog()[0]["rooms_by_date"][first.isoformat()], 14)
+
     def test_group_cart_is_atomic_and_retries_keep_the_same_receipt(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(web, "LEDGER", Path(directory) / "cart.sqlite"):
             web.prepare_ledger()
