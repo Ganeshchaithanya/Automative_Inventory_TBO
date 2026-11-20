@@ -11,6 +11,11 @@ let spotlightTimer;
 let slideStarted = 0;
 const dayMs = 86_400_000;
 const retryBookings = new Map();
+const cartStorageKey = "avoflare-booking-cart";
+let cart = { revision: null, items: [], pending: null };
+try { cart = JSON.parse(sessionStorage.getItem(cartStorageKey)) || cart; } catch { /* Start with an empty cart. */ }
+let cartSending = false;
+let cartReceipt;
 
 function node(tag, value, className) {
   const result = document.createElement(tag);
@@ -84,6 +89,128 @@ function renderBookingRecovery() {
   panel.replaceChildren(...entries);
 }
 
+function groupQuote(hotel, item) {
+  const dates = Object.keys(hotel.rooms_by_date).filter((day) => item.check_in <= day && day < item.check_out);
+  const nights = (Date.parse(item.check_out) - Date.parse(item.check_in)) / dayMs;
+  if (!(nights > 0) || dates.length !== nights) return { capacity: 0, dates: [], total: 0 };
+  const roomLimit = Math.min(...dates.map((day) => hotel.rooms_by_date[day]));
+  const transfers = item.offer === "package";
+  const capacity = transfers ? Math.min(roomLimit, hotel.transfers_by_date[item.check_in] ?? 0) : roomLimit;
+  return { capacity, roomLimit, dates,
+    total: (nights * hotel.price + (transfers ? hotel.transfer_price : 0)) * item.rooms };
+}
+
+function saveCart() {
+  try { sessionStorage.setItem(cartStorageKey, JSON.stringify(cart)); } catch { /* Keep the current tab usable. */ }
+  renderCart();
+}
+
+function openCart() {
+  renderCart();
+  if (!$("#cart-dialog").open) $("#cart-dialog").showModal();
+}
+
+function renderCart() {
+  const list = $("#cart-items");
+  const totalLabel = $("#cart-total");
+  const checkout = $("#cart-checkout");
+  $("#open-cart").textContent = "Cart (" + cart.items.length + ")";
+  const editable = !cart.pending && !cartSending;
+  checkout.textContent = cartSending ? "Checking inventory…" :
+    cart.pending ? "Retry cart confirmation" : "Confirm demo bookings";
+  checkout.hidden = cart.items.length === 0;
+  const available = new Map(hotels.map((hotel) => [hotel.id, {
+    ...hotel, rooms_by_date: { ...hotel.rooms_by_date }, transfers_by_date: { ...hotel.transfers_by_date },
+  }]));
+  let total = 0;
+  let valid = cart.items.length > 0;
+  const rows = cart.items.map((item, index) => {
+    const hotel = available.get(item.hotel_id);
+    const quote = hotel ? groupQuote(hotel, item) : { capacity: 0, total: 0 };
+    const fits = item.rooms <= quote.capacity;
+    valid &&= fits;
+    total += quote.total;
+    if (fits) {
+      for (const day of quote.dates) hotel.rooms_by_date[day] -= item.rooms;
+      if (item.offer === "package") hotel.transfers_by_date[item.check_in] -= item.rooms;
+    }
+    const title = hotel?.name || "Unavailable property";
+    const row = node("article", undefined, "cart-line");
+    const quantity = node("input");
+    Object.assign(quantity, { type: "number", min: "1", step: "1", value: String(item.rooms), disabled: !editable });
+    quantity.setAttribute("aria-label", "Rooms for cart item " + (index + 1) + ", " + title);
+    quantity.addEventListener("change", () => {
+      if (!Number.isSafeInteger(quantity.valueAsNumber) || quantity.valueAsNumber < 1) {
+        quantity.value = String(item.rooms);
+        return;
+      }
+      item.rooms = quantity.valueAsNumber;
+      $("#cart-message").textContent = "";
+      saveCart();
+    });
+    const remove = button("Remove", "outline", () => {
+      cart.items.splice(index, 1);
+      $("#cart-message").textContent = "";
+      saveCart();
+    });
+    remove.disabled = !editable;
+    row.append(
+      node("h3", (index + 1) + ". " + title),
+      node("p", (item.offer === "package" ? "Hotel + transfer" : "Hotel only") + " · " +
+        shortDate(item.check_in) + " to " + shortDate(item.check_out)),
+      node("p", editable && !fits ? "Only " + amount.format(quote.capacity) + " rooms fit after earlier cart items." : currency.format(quote.total),
+        editable && !fits ? "cart-warning" : undefined),
+      quantity, remove,
+    );
+    return row;
+  });
+  if (cartReceipt && !rows.length) {
+    rows.push(node("strong", "Cart confirmed · " + cartReceipt.reference));
+    for (const booking of cartReceipt.bookings) {
+      rows.push(node("p", booking.hotel + " · " + booking.reference + " · " + amount.format(booking.rooms) + " rooms · " +
+        shortDate(booking.nights[0]) + " to " + shortDate(booking.check_out)));
+    }
+    total = cartReceipt.subtotal_inr;
+  }
+  list.replaceChildren(...(rows.length ? rows : [node("p", "Add hotels or packages to build a group booking.")]));
+  totalLabel.textContent = rows.length ? (cartReceipt && !cart.items.length ? "Confirmed demo total " : "Estimated demo total ") +
+    currency.format(total) : "";
+  checkout.disabled = cartSending || (!cart.pending && (!valid || demoRevision === null));
+}
+
+async function confirmCart() {
+  if (cartSending || $("#cart-checkout").disabled) return;
+  cart.pending ||= { request_id: crypto.randomUUID(), demo_revision: cart.revision, items: cart.items.map((item) => ({ ...item })) };
+  const request = cart.pending;
+  cartSending = true;
+  $("#cart-message").textContent = "";
+  saveCart();
+  try {
+    const response = await fetch("/api/booking-carts", {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(request),
+    });
+    const result = await response.json();
+    if (cart.pending !== request) return;
+    if (!response.ok) {
+      if (response.status >= 400 && response.status < 500) cart.pending = null;
+      throw new Error(typeof result.detail === "string" ? result.detail : "Check your cart quantities and dates.");
+    }
+    if (!result.reference || !result.bookings?.length) throw new Error("Cart confirmation is unavailable.");
+    cart.items = [];
+    cart.pending = null;
+    cartReceipt = result;
+    $("#cart-message").textContent = "All demo bookings confirmed.";
+  } catch (error) {
+    if (cart.revision === request.demo_revision) {
+      $("#cart-message").textContent = cart.pending ? "Confirmation is uncertain. Retry this cart to recover the same result." : error.message;
+    }
+  } finally {
+    cartSending = false;
+    saveCart();
+    await refresh();
+  }
+}
+
 function bookingForm(hotel, product) {
   const bookingRevision = demoRevision ?? 0;
   const retryKey = `booking:${bookingRevision}:${hotel.id}:${product}`;
@@ -113,11 +240,11 @@ function bookingForm(hotel, product) {
     hotel.available_from, hotel.available_until);
   const initialOut = pending?.check_out || $("#check-out").value || new Date(Date.parse(start.value) + dayMs).toISOString().slice(0, 10);
   const end = field("Check-out", "date", initialOut, hotel.available_from, hotel.available_until);
-  const rooms = field("Rooms", "number", String(pending?.rooms || 1), "1", "12");
+  const rooms = field("Rooms", "number", String(pending?.rooms || 1), "1", "");
   const quote = node("p", undefined, "quote");
   const message = node("p", undefined, "booking-message");
   message.setAttribute("role", "status");
-  const submit = node("button", "Create demo booking", "button emerald");
+  const submit = node("button", "Add to cart", "button emerald");
   submit.type = "submit";
   const receiptPanel = node("div", undefined, "booking-receipt");
   receiptPanel.hidden = true;
@@ -134,21 +261,17 @@ function bookingForm(hotel, product) {
       submit.disabled = false;
       return;
     }
-    submit.textContent = "Create demo booking";
+    submit.textContent = "Add to cart";
     const current = hotels.find((item) => item.id === hotel.id) || hotel;
-    const nights = (Date.parse(end.value) - Date.parse(start.value)) / dayMs;
     const count = Number(rooms.value);
-    const valid = form.checkValidity() && nights > 0;
-    const total = (nights * hotel.price + (product === "package" ? hotel.transfer_price : 0)) * count;
-    const dates = Object.keys(current.rooms_by_date).filter((day) => start.value <= day && day < end.value);
-    const roomsAvailable = dates.length === nights && dates.every((day) => current.rooms_by_date[day] >= count);
-    const transferAvailable = product === "hotel" || current.transfers_by_date[start.value] >= count;
-    if (!valid) quote.textContent = "Choose a valid check-in, check-out and room count.";
-    else if (!roomsAvailable) quote.textContent = "There are fewer rooms available for this stay. Try a smaller group or different dates.";
-    else if (!transferAvailable) quote.textContent = "There are fewer transfers available on arrival. Try a hotel-only stay or different dates.";
-    else quote.textContent = currency.format(total) + " demo total · " + count + (count === 1 ? " room" : " rooms") +
-      " × " + nights + (nights === 1 ? " night" : " nights");
-    submit.disabled = !valid || !roomsAvailable || !transferAvailable;
+    const stay = groupQuote(current, { check_in: start.value, check_out: end.value, rooms: count, offer: product });
+    const valid = form.checkValidity() && stay.dates.length > 0 && Number.isSafeInteger(count);
+    if (cart.pending) quote.textContent = "Recover your pending cart confirmation before adding more stays.";
+    else if (!valid) quote.textContent = "Choose a valid check-in, check-out and room count.";
+    else quote.textContent = amount.format(stay.capacity) + " rooms available for the full stay" +
+      (product === "package" && stay.capacity < stay.roomLimit ? " with arrival transfers" : "") +
+      (count <= stay.capacity ? " · " + currency.format(stay.total) + " estimated total" : ". Adjust the group size or dates.");
+    submit.disabled = !valid || count > stay.capacity || Boolean(cart.pending);
   }
   start.addEventListener("input", () => {
     if (start.value && (!end.value || end.value <= start.value) && start.value < hotel.available_until) {
@@ -160,12 +283,20 @@ function bookingForm(hotel, product) {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (sending || recorded || (!pending && submit.disabled)) return;
-    const selection = pending || {
-      hotel_id: hotel.id, offer: product, check_in: start.value, check_out: end.value, rooms: Number(rooms.value),
-      origin: $("#origin").value.trim(),
-      demo_revision: bookingRevision,
-      request_id: crypto.randomUUID(),
-    };
+    if (!pending) {
+      if (cart.pending) return;
+      cart.items.push({
+        hotel_id: hotel.id, offer: product, check_in: start.value, check_out: end.value,
+        rooms: Number(rooms.value), origin: $("#origin").value.trim(),
+      });
+      cartReceipt = undefined;
+      $("#cart-message").textContent = "";
+      saveCart();
+      $("#hotel-dialog").close();
+      openCart();
+      return;
+    }
+    const selection = pending;
     savePending(selection);
     sending = true;
     message.textContent = "";
@@ -387,6 +518,8 @@ $("#search").addEventListener("submit", (event) => {
   event.preventDefault();
   renderStays({ scroll: true });
 });
+$("#open-cart").addEventListener("click", openCart);
+$("#cart-checkout").addEventListener("click", confirmCart);
 for (const control of document.querySelectorAll("[data-offer]")) {
   control.addEventListener("click", () => {
     offer = control.dataset.offer;
@@ -421,12 +554,19 @@ async function refresh() {
       catalogSnapshot = "";
     }
     demoRevision = revision;
+    if (cart.revision !== revision) {
+      cart = { revision, items: [], pending: null };
+      cartReceipt = undefined;
+      $("#cart-message").textContent = "";
+      saveCart();
+    }
     const snapshot = JSON.stringify(data);
     if (snapshot === catalogSnapshot) return;
     catalogSnapshot = snapshot;
     hotels = data;
     renderStays();
     renderBookingRecovery();
+    renderCart();
     renderDestinations();
     renderSpotlight();
     if ($("#hotel-dialog").open && openHotel) {

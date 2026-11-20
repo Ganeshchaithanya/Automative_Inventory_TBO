@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from ascis.catalog import HOTELS, TRANSFER_PRICE, demo_quote, listings, promotion_seconds
+from ascis.catalog import HOTELS, TRANSFER_PRICE, consume_booking, demo_quote, listings, promotion_seconds
 from ascis.event_evidence import HISTORY, PROPERTIES, attendance_adjustment, hotel_search
 from ascis.evidence import EvidenceState, curated_context, supplier_evidence
 from ascis.evidence_workflow import research_event
@@ -45,15 +45,24 @@ class Approval(BaseModel):
     acknowledge_simulation: bool
 
 
-class Booking(BaseModel):
-    request_id: UUID
+class BookingItem(BaseModel):
     hotel_id: str
     offer: Literal["hotel", "package"]
     check_in: date
     check_out: date
-    rooms: int = Field(ge=1, le=12)
+    rooms: int = Field(ge=1)
     origin: str = Field(default="", max_length=100)
+
+
+class Booking(BookingItem):
+    request_id: UUID
     demo_revision: int = Field(default=0, ge=0)
+
+
+class BookingCart(BaseModel):
+    request_id: UUID
+    demo_revision: int = Field(default=0, ge=0)
+    items: list[BookingItem] = Field(min_length=1)
 
 
 class ResetDemo(BaseModel):
@@ -102,6 +111,10 @@ def prepare_ledger():
             connection.execute("CREATE TABLE IF NOT EXISTS scenario_review (id TEXT PRIMARY KEY, inputs TEXT NOT NULL)")
             connection.execute(
                 "CREATE TABLE IF NOT EXISTS demo_booking "
+                "(id TEXT PRIMARY KEY, request TEXT NOT NULL, receipt TEXT NOT NULL)"
+            )
+            connection.execute(
+                "CREATE TABLE IF NOT EXISTS demo_booking_cart "
                 "(id TEXT PRIMARY KEY, request TEXT NOT NULL, receipt TEXT NOT NULL)"
             )
             connection.execute(
@@ -446,6 +459,7 @@ def reset_demo(body: ResetDemo):
             if body.revision != demo_revision(connection):
                 raise HTTPException(409, "Another tab already reset the demo.")
             connection.execute("DELETE FROM demo_booking")
+            connection.execute("DELETE FROM demo_booking_cart")
             connection.execute("DELETE FROM option_review")
             connection.execute("DELETE FROM agent_decline")
             connection.execute("DELETE FROM scenario_review")
@@ -691,16 +705,64 @@ def book(body: Booking):
                       if item["id"] == body.hotel_id), None)
         if hotel is None:
             raise HTTPException(404, "Hotel not found.")
-        try:
-            details = demo_quote(hotel, body.offer, body.check_in, body.check_out, body.rooms)
-        except ValueError as error:
-            raise HTTPException(409, str(error)) from error
-        receipt = {**details, "reference": "DEMO-" + uuid4().hex[:8].upper(), "origin": body.origin.strip()}
+        receipt = booking_details(hotel, body)
         connection.execute(
             "INSERT INTO demo_booking VALUES (?, ?, ?)", (request_id, request, json.dumps(receipt)),
         )
         receipt.pop("cost_inr")
         return receipt
+
+
+def booking_details(hotel: dict, item: BookingItem) -> dict:
+    try:
+        details = demo_quote(hotel, item.offer, item.check_in, item.check_out, item.rooms)
+    except ValueError as error:
+        raise HTTPException(409, str(error)) from error
+    return {**details, "reference": "DEMO-" + uuid4().hex[:8].upper(), "origin": item.origin.strip()}
+
+
+@storefront.post("/api/booking-carts")
+def book_cart(body: BookingCart):
+    request_id = str(body.request_id)
+    with LOCK, closing(sqlite3.connect(LEDGER)) as connection, connection:
+        connection.execute("BEGIN IMMEDIATE")
+        if body.demo_revision != demo_revision(connection):
+            raise HTTPException(409, "The demo was reset. Rebuild your cart with the current inventory.")
+        previous = connection.execute(
+            "SELECT request, receipt FROM demo_booking_cart WHERE id = ?", (request_id,),
+        ).fetchone()
+        if previous:
+            if BookingCart.model_validate_json(previous[0]) != body:
+                raise HTTPException(409, "This cart request was already used.")
+            return json.loads(previous[1])
+        hotels = {hotel["id"]: hotel for hotel in listings(approved_stock(connection), booking_receipts(connection))}
+        bookings = []
+        for index, item in enumerate(body.items, start=1):
+            hotel = hotels.get(item.hotel_id)
+            if not hotel:
+                raise HTTPException(409, f"Cart item {index}: this property is no longer available.")
+            try:
+                receipt = booking_details(hotel, item)
+            except HTTPException as error:
+                raise HTTPException(409, f"Cart item {index} ({hotel['name']}): {error.detail}") from error
+            consume_booking(hotel["rooms_by_date"], hotel["acquired_by_date"], hotel["transfers_by_date"], receipt)
+            line = Booking(**item.model_dump(), request_id=uuid4(), demo_revision=body.demo_revision)
+            connection.execute(
+                "INSERT INTO demo_booking VALUES (?, ?, ?)",
+                (str(line.request_id), line.model_dump_json(), json.dumps(receipt)),
+            )
+            receipt.pop("cost_inr")
+            bookings.append(receipt)
+        confirmation = {
+            "reference": "CART-" + body.request_id.hex[:12].upper(),
+            "bookings": bookings,
+            "subtotal_inr": sum(booking["subtotal_inr"] for booking in bookings),
+        }
+        connection.execute(
+            "INSERT INTO demo_booking_cart VALUES (?, ?, ?)",
+            (request_id, body.model_dump_json(), json.dumps(confirmation)),
+        )
+        return confirmation
 
 
 @app.get("/api/impact")

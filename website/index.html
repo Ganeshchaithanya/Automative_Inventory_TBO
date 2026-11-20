@@ -13,7 +13,7 @@
     <div class="shell header-row">
       <a class="brand" href="/" aria-label="Avoflare Stays home"><span class="brand-symbol" aria-hidden="true">A</span> Avoflare<span class="brand-light">Stays</span></a>
       <nav aria-label="Catalog navigation"><a href="#stays" data-offer="hotel">Hotels</a><a href="#stays" data-offer="package">Packages</a><a href="#destinations">Destinations</a></nav>
-      <span class="demo-label"><i></i> Demo catalog</span>
+      <button type="button" class="button outline cart-launch" id="open-cart">Cart (0)</button>
     </div>
   </header>
   <main>
@@ -56,6 +56,16 @@
   <footer class="shell"><a class="brand" href="/" aria-label="Avoflare Stays home">Avoflare<span class="brand-light">Stays</span></a><p>Demonstration catalog · Fictional stays and inventory</p></footer>
   <dialog id="hotel-dialog" aria-labelledby="detail-title">
     <div id="hotel-detail"></div>
+    <form method="dialog" class="back-form"><button type="submit" class="button outline">Close</button></form>
+  </dialog>
+  <dialog id="cart-dialog" aria-labelledby="cart-title">
+    <div class="dialog-body">
+      <h2 id="cart-title">Booking cart</h2>
+      <div id="cart-items"></div>
+      <p id="cart-total"></p>
+      <p id="cart-message" role="status"></p>
+      <button type="button" id="cart-checkout" class="button emerald">Confirm demo bookings</button>
+    </div>
     <form method="dialog" class="back-form"><button type="submit" class="button outline">Close</button></form>
   </dialog>
 </body>

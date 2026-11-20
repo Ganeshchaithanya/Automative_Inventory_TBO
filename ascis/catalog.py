@@ -36,6 +36,14 @@ def promotion_seconds(signal: float, committed: int, recovered: int) -> int:
     return 5 + round(3 * demand + 2 * unrecovered)
 
 
+def consume_booking(rooms: dict, acquired: dict, transfers: dict, booking: dict) -> None:
+    for day in booking["nights"]:
+        rooms[day] -= booking["rooms"]
+        acquired[day] -= booking.get("acquired_nights", {}).get(day, 0)
+    if booking["offer"] == "package":
+        transfers[booking["nights"][0]] -= booking["rooms"]
+
+
 def listings(approved: dict[str, int], bookings: Sequence[dict] = ()) -> list[dict]:
     records = []
     for event in EVENTS:
@@ -56,11 +64,7 @@ def listings(approved: dict[str, int], bookings: Sequence[dict] = ()) -> list[di
         for booking in bookings:
             if booking["hotel_id"] != key:
                 continue
-            for day in booking["nights"]:
-                rooms[day] -= booking["rooms"]
-                acquired[day] -= booking.get("acquired_nights", {}).get(day, 0)
-            if booking["offer"] == "package":
-                transfers[booking["nights"][0]] -= booking["rooms"]
+            consume_booking(rooms, acquired, transfers, booking)
         records.append({
             **hotel, "id": key, "destination": event["destination"], "price": SELL_PRICE,
             "stock": sum(rooms.values()), "featured_stock": sum(acquired.values()), "event": event["title"],
@@ -79,10 +83,11 @@ def demo_quote(hotel: dict, offer: str, check_in: date, check_out: date, rooms: 
         raise ValueError("Choose dates within the property's demo stay window.")
     nights = dates_between(check_in, check_out)
     if any(hotel["rooms_by_date"][day] < rooms for day in nights):
-        raise ValueError("There are not enough room-nights for these dates.")
+        available = min(hotel["rooms_by_date"][day] for day in nights)
+        raise ValueError(f"Only {available} rooms are available for the full stay.")
     package = offer == "package"
     if package and hotel["transfers_by_date"][start] < rooms:
-        raise ValueError("Airport transfers are sold out for this arrival date.")
+        raise ValueError(f"Only {hotel['transfers_by_date'][start]} airport transfers are available on arrival.")
     room_nights = rooms * len(nights)
     return {
         "hotel_id": hotel["id"], "hotel": hotel["name"], "offer": offer, "rooms": rooms,

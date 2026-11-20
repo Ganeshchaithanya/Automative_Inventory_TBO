@@ -24,6 +24,32 @@ class OfferPolicy:
 
 
 class StorefrontTests(unittest.TestCase):
+    def test_group_cart_is_atomic_and_retries_keep_the_same_receipt(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(web, "LEDGER", Path(directory) / "cart.sqlite"):
+            web.prepare_ledger()
+            hotel = next(item for item in web.catalog() if item["id"] == "icc")
+            first, second = map(date.fromisoformat, sorted(hotel["rooms_by_date"])[:2])
+            group = web.BookingItem(hotel_id="icc", offer="hotel", check_in=first, check_out=second, rooms=15)
+            overlapping = group.model_copy(update={"offer": "package", "rooms": 4})
+            request = web.BookingCart(request_id=uuid4(), items=[group, overlapping])
+            with self.assertRaises(HTTPException) as rejected:
+                web.book_cart(request)
+            self.assertIn("Cart item 2", rejected.exception.detail)
+            after_rejection = next(item for item in web.catalog() if item["id"] == "icc")
+            self.assertEqual(after_rejection["rooms_by_date"], hotel["rooms_by_date"])
+            self.assertEqual(after_rejection["transfers_by_date"], hotel["transfers_by_date"])
+
+            edited = request.model_copy(update={"items": [group, overlapping.model_copy(update={"rooms": 2})]})
+            confirmation = web.book_cart(edited)
+            self.assertEqual([item["rooms"] for item in confirmation["bookings"]], [15, 2])
+            self.assertEqual(confirmation["subtotal_inr"], 70_400)
+            self.assertEqual(web.book_cart(edited), confirmation)
+            with self.assertRaises(HTTPException):
+                web.book_cart(request)
+            after_confirmation = next(item for item in web.catalog() if item["id"] == "icc")
+            self.assertEqual(after_confirmation["rooms_by_date"][first.isoformat()], 1)
+            self.assertEqual(after_confirmation["transfers_by_date"][first.isoformat()], 22)
+
     def test_seat_and_room_capacity_survive_racing_requests_and_retries(self):
         with tempfile.TemporaryDirectory() as directory, patch.object(web, "LEDGER", Path(directory) / "bookings.sqlite"):
             web.prepare_ledger()

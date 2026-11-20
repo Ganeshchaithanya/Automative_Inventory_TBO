@@ -42,6 +42,8 @@ python -m ascis.web
 
 Open [Avoflare Stays](http://127.0.0.1:8081/) to browse current demo stock by destination, property and stay dates. The fictional properties have initial demo stock so the catalog is populated before any new proposal is approved.
 
+Travel agents can add multiple hotel stays and packages to the booking cart and adjust room quantities before checkout. The group limit is the available inventory for every night, plus arrival transfer capacity for packages. A cart checkout records the full set of bookings in one transaction and returns a cart reference plus individual booking references.
+
 Open [the operations demo](http://127.0.0.1:8083/) for the model and inventory impact view or [the approval inbox](http://127.0.0.1:8083/approvals) to review the agent’s requests. The two sites share a local SQLite ledger under `runs/`. On startup, the trained checkpoint evaluates the demo markets and queues proposals that require approval. Each proposal has a downloadable PDF bound to its exact terms. Accepting adds the firm quantity to the storefront. Declining leaves stock as-is.
 
 Use [Scenario Lab](http://127.0.0.1:8083/scenarios) to change the event, timing, demand, cash, risk limit and quote verification. Selecting a market or clicking **Run scenario** sends an eligible opening allocation to the Approval Inbox. Presets and hypothetical deadline simulations are previews. A queued request stays pending until reviewed. Bengaluru appears in the storefront after its first firm allocation is approved.

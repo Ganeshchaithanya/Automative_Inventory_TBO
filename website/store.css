@@ -89,6 +89,15 @@ dialog form{padding-top:0}
 .booking-receipt p{margin:4px 0 0}
 .booking-message:empty{display:none}
 .booking-recovery:not([hidden]){display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+.cart-launch{justify-self:end;white-space:nowrap}
+#cart-dialog{width:min(660px,calc(100% - 25px));max-height:90vh}
+#cart-items{display:grid;gap:12px;margin:12px 0}
+.cart-line{display:grid;grid-template-columns:1fr auto;gap:6px 12px;border:1px solid var(--line);border-radius:9px;padding:13px}
+.cart-line h3,.cart-line p{grid-column:1/-1;margin:0}
+.cart-line input{width:8ch;padding:6px;border:1px solid var(--line);border-radius:5px}
+.dialog-body .cart-warning{color:#873c20}
+#cart-total{font-weight:700;color:var(--deep)}
+#cart-message:empty{display:none}
 @media(max-width:420px){.booking-form{grid-template-columns:1fr 1fr}.booking-form label:nth-of-type(3){grid-column:1/-1}}
 .back-form{padding-top:8px}
 #hotel-dialog{max-height:92vh;overflow:auto}
