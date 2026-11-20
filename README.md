@@ -66,6 +66,8 @@ The storefront and approval inbox are for local use with the Python/PyTorch chec
 
 ## Hosted demo
 
-Publish the repository as `Automative_Inventory_TBO`. The Render Blueprint uses the same service name and serves the operations site. The `avoflare-stays` Vercel project serves the storefront. Set `ASCIS_OPERATIONS_URL` on Vercel to the Render origin and `ASCIS_STOREFRONT_URL` on Render to the Vercel origin.
+The [GitHub repository](https://github.com/Ganeshchaithanya/Automative_Inventory_TBO) and [Render operations site](https://automative-inventory-tbo.onrender.com/) use the name `Automative_Inventory_TBO`. The [storefront](https://af-stays.vercel.app/) runs in the `af-stays` Vercel project. The Vercel project uses `ASCIS_OPERATIONS_URL` to reach Render. Set `ASCIS_STOREFRONT_URL` when deploying the operations service under a different host.
+
+To redeploy the storefront, run `node deploy/build-storefront.mjs --vercel` from the repository root. Deploy `runs/af-stays-vercel` to the `af-stays` project. The bundle contains the storefront and its API proxy. Render deploys the Python operations service from `main`.
 
 The storefront forwards catalog and booking requests to Render so both sites share one simulated inventory ledger. The free Render configuration uses temporary storage. Restarts and redeploys can reset demo bookings and approvals. The hosted operations site is a shared demo with an accessible reset control.

@@ -239,6 +239,8 @@ def run_scenario(body: Scenario):
 def storefront_link():
     if storefront_url := os.getenv("ASCIS_STOREFRONT_URL"):
         return RedirectResponse(storefront_url)
+    if os.getenv("RENDER_EXTERNAL_HOSTNAME") == "automative-inventory-tbo.onrender.com":
+        return RedirectResponse("https://af-stays.vercel.app/")
     public_port = int(os.getenv("ASCIS_PORT", "8080"))
     return RedirectResponse(f"http://127.0.0.1:{public_port}/")
 

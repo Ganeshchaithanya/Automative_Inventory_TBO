@@ -16,7 +16,7 @@ services:
       - key: ASCIS_LEDGER
         value: /tmp/ascis-ledger.sqlite
       - key: ASCIS_STOREFRONT_URL
-        sync: false
+        value: https://af-stays.vercel.app/
       - key: OMP_NUM_THREADS
         value: "1"
       - key: OPENBLAS_NUM_THREADS
