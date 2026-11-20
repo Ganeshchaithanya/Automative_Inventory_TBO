@@ -113,9 +113,12 @@ function renderCart() {
   const checkout = $("#cart-checkout");
   const count = cart.items.length;
   const itemCount = amount.format(count) + (count === 1 ? " item" : " items");
+  const confirmed = count === 0 ? cartReceipt : null;
   $("#cart-count").textContent = amount.format(count);
   $("#open-cart").setAttribute("aria-label", "Cart, " + itemCount);
-  $("#cart-title").textContent = "Booking cart · " + itemCount;
+  const title = $("#cart-title");
+  const heading = confirmed ? "Booking confirmed" : "Booking cart · " + itemCount;
+  if (title.textContent !== heading) title.textContent = heading;
   const editable = !cart.pending && !cartSending;
   checkout.textContent = cartSending ? "Checking inventory…" :
     cart.pending ? "Retry cart confirmation" : "Confirm demo bookings";
@@ -165,16 +168,22 @@ function renderCart() {
     );
     return row;
   });
-  if (cartReceipt && !rows.length) {
-    rows.push(node("strong", "Cart confirmed · " + cartReceipt.reference));
-    for (const booking of cartReceipt.bookings) {
-      rows.push(node("p", booking.hotel + " · " + booking.reference + " · " + amount.format(booking.rooms) + " rooms · " +
-        shortDate(booking.nights[0]) + " to " + shortDate(booking.check_out)));
+  if (confirmed) {
+    rows.push(node("p", "Cart reference " + confirmed.reference, "card-meta"));
+    for (const booking of confirmed.bookings) {
+      const row = node("article", undefined, "cart-line");
+      row.append(
+        node("h3", booking.hotel),
+        node("p", amount.format(booking.rooms) + (booking.rooms === 1 ? " room" : " rooms") + " · " +
+          shortDate(booking.nights[0]) + " to " + shortDate(booking.check_out)),
+        node("p", "Booking reference " + booking.reference, "card-meta"),
+      );
+      rows.push(row);
     }
-    total = cartReceipt.subtotal_inr;
+    total = confirmed.subtotal_inr;
   }
   list.replaceChildren(...(rows.length ? rows : [node("p", "Add hotels or packages to build a group booking.")]));
-  totalLabel.textContent = rows.length ? (cartReceipt && !cart.items.length ? "Confirmed demo total " : "Estimated demo total ") +
+  totalLabel.textContent = rows.length ? (confirmed ? "Confirmed demo total " : "Estimated demo total ") +
     currency.format(total) : "";
   checkout.disabled = cartSending || (!cart.pending && (!valid || demoRevision === null));
 }
@@ -200,7 +209,6 @@ async function confirmCart() {
     cart.items = [];
     cart.pending = null;
     cartReceipt = result;
-    $("#cart-message").textContent = "All demo bookings confirmed.";
   } catch (error) {
     if (cart.revision === request.demo_revision) {
       $("#cart-message").textContent = cart.pending ? "Confirmation is uncertain. Retry this cart to recover the same result." : error.message;
