@@ -65,10 +65,10 @@ The storefront and approval inbox are for local use with the Python/PyTorch chec
 
 ## Deploy the two demo sites
 
-The GitHub repository name is `Automative_Inventory_TBO`. The Render service hosts the operations site at `/impact`, `/approvals`, and `/scenarios`. The Vercel project serves the storefront and forwards its catalog and booking endpoints to Render. Both sites use the same simulated inventory ledger.
+The GitHub repository and Render service are named `Automative_Inventory_TBO`. Render hosts the operations site at `/impact`, `/approvals`, and `/scenarios`. The `tbo-storefront` Vercel project serves the storefront and forwards its catalog and booking endpoints to Render. Both sites use the same simulated inventory ledger.
 
 1. Push this repository to GitHub and import it as a [Render Blueprint](https://dashboard.render.com/blueprints). Set `ASCIS_STOREFRONT_URL` to the intended Vercel project URL when prompted. The Blueprint loads the checked-in synthetic checkpoints and checks `/healthz` after startup.
-2. Import the same repository as a [Vercel project](https://vercel.com/new), using the root directory. Set `ASCIS_OPERATIONS_URL` to the Render service origin, for example `https://automative-inventory-tbo-ops.onrender.com` if that is the hostname assigned by Render. Vercel builds the storefront with `vercel.json`.
+2. Import the same repository as a [Vercel project](https://vercel.com/new), using the root directory. Name it `tbo-storefront` and set `ASCIS_OPERATIONS_URL` to the origin assigned by Render. Vercel builds the storefront with `vercel.json`.
 3. Update `ASCIS_STOREFRONT_URL` in Render if Vercel assigns a different hostname. Verify the storefront offers load, then approve a demo allocation on Render and check that the storefront inventory reflects it.
 
 The default Render Blueprint uses the Free plan and stores the shared demo ledger in `/tmp`. A redeploy or instance replacement can reset approvals and bookings. The hosted demo is a shared simulation and people with the operations link can reset it. The checked-in weights contain synthetic training results. The local ledger and local reports are excluded from Git.
