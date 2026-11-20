@@ -1,0 +1,10 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "node deploy/build-storefront.mjs",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/catalog", "destination": "/api/storefront/route?resource=catalog" },
+    { "source": "/api/bookings", "destination": "/api/storefront/route?resource=bookings" }
+  ]
+}

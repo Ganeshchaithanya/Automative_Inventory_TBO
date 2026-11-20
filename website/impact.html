@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASCIS | Inventory impact</title>
+  <link rel="stylesheet" href="/assets/store.css">
+  <script type="module" src="/assets/impact.js"></script>
+  <script type="module" src="/assets/demo-controls.js"></script>
+</head>
+<body class="impact-page">
+  <header class="site-header"><div class="shell header-row">
+    <a class="brand" href="/">ASCIS<span class="brand-light">Demo</span></a>
+    <nav aria-label="Demo views"><a href="/scenarios">Scenario Lab</a><a href="/approvals">Approvals</a><a href="/storefront" target="_blank" rel="noopener">Storefront</a></nav>
+    <span class="demo-label"><i></i> Live simulation</span>
+  </div></header>
+  <div class="shell demo-toolbar" data-demo-controls></div>
+  <main class="shell review">
+    <div class="impact-title">
+      <div><p class="eyebrow"><span></span> ASCIS DEMO</p><h1>From demand to sell-through</h1><p>Follow an event from public research and the policy decision to promoted inventory and demo bookings.</p></div>
+      <label for="event-select">Event market<select id="event-select"></select></label>
+    </div>
+    <div id="impact" aria-live="polite"><p>Loading inventory impact…</p></div>
+  </main>
+</body>
+</html>

@@ -1,0 +1,8 @@
+numpy
+scipy
+torch
+fastapi
+uvicorn
+httpx
+mcp>=2.3,<3
+reportlab>=4.4,<6

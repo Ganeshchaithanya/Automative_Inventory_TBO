@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ASCIS | Procurement approvals</title>
+  <link rel="stylesheet" href="/assets/store.css">
+  <script type="module" src="/assets/approvals.js"></script>
+  <script type="module" src="/assets/demo-controls.js"></script>
+</head>
+<body>
+  <header class="site-header"><div class="shell header-row">
+    <a class="brand" href="/">ASCIS<span class="brand-light">Demo</span></a><nav aria-label="Demo views"><a href="/scenarios">Scenario Lab</a><a href="/impact">Inventory impact</a><a href="/storefront" target="_blank" rel="noopener">Storefront</a></nav><span class="demo-label"><i></i> Internal demo</span>
+  </div></header>
+  <div class="shell demo-toolbar" data-demo-controls></div>
+  <main class="review shell">
+    <h1 style="font-size:clamp(2.4rem,5vw,4rem);color:#07392e">Procurement approvals</h1>
+    <p>Download the review PDF and approve or decline the proposed allocation. Approval adds fictional stock to the storefront without moving money.</p>
+    <div id="messages" aria-live="polite"></div>
+    <div id="requests"><p>Loading requests…</p></div>
+    <section id="activity-panel" hidden aria-labelledby="activity-title">
+      <h2 id="activity-title">Recent agent activity</h2>
+      <ul id="activity"></ul>
+    </section>
+  </main>
+</body>
+</html>
