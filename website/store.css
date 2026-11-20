@@ -85,6 +85,11 @@ dialog form{padding-top:0}
 .booking-form input{display:block;width:100%;border:1px solid var(--line);border-radius:6px;padding:7px;color:var(--ink);margin-top:3px}
 .booking-form .quote,.booking-form .booking-message{grid-column:1/-1;margin:0;font-size:.88rem}
 .booking-form .button{grid-column:1/-1}
+.booking-receipt{grid-column:1/-1;border:1px solid var(--line);border-left:4px solid var(--emerald);border-radius:8px;padding:12px 14px;background:var(--paper,#f4f8f5)}
+.booking-receipt p{margin:4px 0 0}
+.booking-message:empty{display:none}
+.booking-recovery:not([hidden]){display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+@media(max-width:420px){.booking-form{grid-template-columns:1fr 1fr}.booking-form label:nth-of-type(3){grid-column:1/-1}}
 .back-form{padding-top:8px}
 #hotel-dialog{max-height:92vh;overflow:auto}
 #hotel-dialog .dialog-body{padding-bottom:7px}
@@ -128,9 +133,14 @@ dialog form{padding-top:0}
 .evidence-card a{color:var(--emerald);font-weight:650}
 .evidence-list{padding-left:19px;margin:8px 0;color:var(--muted)}
 .evidence-list li{margin-bottom:5px}
-.lab-layout{display:grid;grid-template-columns:minmax(290px,.85fr) minmax(0,1.55fr);gap:16px;align-items:start}
+.lab-layout{display:grid;grid-template-columns:minmax(265px,.65fr) minmax(0,1.65fr);gap:24px;align-items:start}
+#result{display:grid;gap:16px;min-width:0}
 .lab-input,.lab-readout{background:white}
+.lab-readout{padding:clamp(16px,2.3vw,25px)}
 .lab-input h2,.lab-readout h2{font-size:1.62rem;line-height:1.2;margin-bottom:12px}
+.lab-note{line-height:1.55;color:var(--muted);margin-bottom:14px}
+.lab-assumptions{display:flex;flex-wrap:wrap;gap:7px 9px;list-style:none;margin:0;padding:0}
+.lab-assumptions li{background:#edf5ef;border-radius:8px;padding:6px 9px;color:var(--deep);font-size:.83rem}
 .lab-presets{display:flex;flex-wrap:wrap;gap:5px;margin-bottom:12px}
 .lab-presets .button{margin:0;padding:6px 8px;font-size:.82rem}
 #scenario-form{display:grid;gap:10px}
@@ -143,19 +153,23 @@ dialog form{padding-top:0}
 #scenario-error{color:#8c3015}
 .lab-numbers{display:grid;grid-template-columns:1fr 1fr;gap:8px}
 .lab-check{display:flex!important;align-items:center;gap:6px}
-.lab-verdict{background:var(--deep);color:white;border-radius:11px;padding:16px 17px;margin-bottom:10px}
+.lab-verdict{background:var(--deep);color:white;border-radius:11px;padding:clamp(17px,2.4vw,26px)}
 .lab-verdict h2{color:white;font-size:clamp(1.65rem,3vw,2.55rem);margin:5px 0 4px}
 .lab-verdict p{color:#e1eee6;font-size:.87rem}
+.lab-verdict a{color:#fff; text-decoration:underline}
 .lab-verdict .prior-run{margin-top:7px}
-.lab-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
-.model-trace{margin:0 0 14px;padding-left:20px}
-.model-trace li{margin:0 0 8px;padding-left:3px}
+.lab-metrics{grid-template-columns:repeat(3,minmax(0,1fr));margin-bottom:0}
+.model-trace{margin:0;padding-left:22px}
+.model-trace li{padding:8px 0 10px 4px;border-bottom:1px solid var(--line)}
+.model-trace li:last-child{border-bottom:0;padding-bottom:0}
 .model-trace strong,.model-trace span{display:block}
 .model-trace span{color:var(--muted);font-size:.87rem}
 .lab-table{overflow-x:auto;margin-top:7px}
 .lab-table table{border-collapse:collapse;width:100%;text-align:left;font-size:.8rem}
-.lab-table th,.lab-table td{padding:6px;border-bottom:1px solid var(--line)}
-.lab-table td:nth-child(2),.lab-table td:nth-child(3){white-space:nowrap}
+.lab-table th,.lab-table td{padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+.lab-table th{background:#f3f7f4}
+.lab-table td:nth-child(2),.lab-table td:nth-child(3),.lab-table td:nth-child(4){white-space:nowrap}
+.lab-blocked{color:#873c20}
 .chosen-row{background:#e9f4ed;font-weight:700;color:var(--deep)}
 @media(max-width:800px){.lab-layout{grid-template-columns:1fr}}
 @media(max-width:650px){.header-row nav{display:flex;grid-column:1/-1;grid-row:2;gap:17px}.header-row nav a{padding:1px 0 9px;font-size:.84rem}}

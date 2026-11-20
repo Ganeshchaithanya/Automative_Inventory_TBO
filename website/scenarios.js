@@ -52,6 +52,33 @@ function metric(label, value) {
   return item;
 }
 
+function section(title, description) {
+  const card = node("section", undefined, "review-card lab-readout");
+  card.append(node("h2", title));
+  if (description) card.append(node("p", description, "lab-note"));
+  return card;
+}
+
+function whySelected(data, selected) {
+  if (!data.actor_ran) {
+    if (!data.trigger.active && data.phase === "opening") return "The opening demand signal stayed below the market trigger, so the allocation policy remained idle.";
+    return data.supplier_evidence.reason + (data.phase === "deadline"
+      ? " The option needs review before any new action."
+      : " The system requested updated terms before evaluating a commitment.");
+  }
+  const weight = data.action_weights?.[data.selected_action];
+  const choice = weight == null
+    ? "The policy selected this action from the eligible options."
+    : "The policy ranked this highest among " + Object.keys(data.action_weights).length + " eligible actions with a " +
+      (100 * weight).toFixed(1) + "% selection weight.";
+  if (selected?.peak_cash) {
+    return choice + " Expected contribution is " + currency.format(selected.expected_profit) +
+      ", with " + currency.format(selected.downside_cvar90) + " modeled downside against a " +
+      currency.format(data.downside_limit) + " limit.";
+  }
+  return choice + " This action makes no new inventory commitment.";
+}
+
 function stage(list, label, description) {
   const item = node("li");
   item.append(node("strong", label), node("span", description));
@@ -63,7 +90,7 @@ function candidateTable(data) {
   const table = node("table");
   const head = node("thead");
   const headers = node("tr");
-  for (const label of ["Candidate action", "Peak cash", "90% downside", "Expected sell-through", "Eligibility"]) {
+  for (const label of ["Candidate action", "Peak cash", "Expected contribution", "90% downside", "Expected sell-through", "Policy weight", "Eligibility"]) {
     const field = node("th", label);
     field.scope = "col";
     headers.append(field);
@@ -73,11 +100,15 @@ function candidateTable(data) {
   for (const item of data.candidates) {
     const selected = item.action === data.selected_action;
     const row = node("tr", undefined, selected ? "chosen-row" : "");
+    const weight = data.action_weights?.[item.action];
     row.append(
       node("td", actions[item.action] + (selected ? " · Selected" : "")),
-      node("td", currency.format(item.peak_cash)), node("td", currency.format(item.downside_cvar90)),
+      node("td", currency.format(item.peak_cash)), node("td", currency.format(item.expected_profit)),
+      node("td", currency.format(item.downside_cvar90)),
       node("td", item.expected_sell_through_pct == null ? "—" : Math.round(item.expected_sell_through_pct) + "%"),
-      node("td", item.excluded_by.length ? item.excluded_by.join(", ") : "Eligible"),
+      node("td", weight == null ? "—" : (100 * weight).toFixed(1) + "%"),
+      node("td", item.excluded_by.length ? item.excluded_by.join(", ") : "Eligible",
+        item.excluded_by.length ? "lab-blocked" : ""),
     );
     body.append(row);
   }
@@ -122,6 +153,17 @@ function render(data) {
     evidence.eligible ? "MONITORING DECISION" : "EVIDENCE REVIEW", "eyebrow"));
   verdict.append(node("h2", actions[data.selected_action]));
   verdict.append(node("p", data.event + " · " + data.market));
+  const selected = data.candidates.find((item) => item.action === data.selected_action);
+  const explanation = section("Why this action was selected", whySelected(data, selected));
+  const assumptions = node("ul", undefined, "lab-assumptions");
+  for (const label of [
+    (data.phase === "opening" ? "Opening decision" : "Option deadline"),
+    (data.volatile ? "Volatile market" : "Stable market"),
+    "Demand signal " + data.signal.toFixed(2),
+    "Cash headroom " + currency.format(data.cash_headroom),
+    number.format(data.existing_room_nights) + " existing room-nights",
+  ]) assumptions.append(node("li", label));
+  explanation.append(assumptions);
   const reviews = {
     queued: "Allocation sent for human review.",
     "existing request": "This market already has a request in the approval inbox.",
@@ -139,13 +181,14 @@ function render(data) {
     verdict.append(node("p", "Previous run: " + actions[previous.selected_action] +
       " · median forecast " + number.format(previous.forecast.p50) + " room-nights", "prior-run"));
   }
+  const forecast = section("Demand forecast", "Expected total room-nights across the simulated event window.");
   const metrics = node("div", undefined, "impact-metrics lab-metrics");
   metrics.append(
     metric("P10 room-nights", data.forecast.p10), metric("Median room-nights", data.forecast.p50),
     metric("P90 room-nights", data.forecast.p90),
   );
-  const details = node("section", undefined, "review-card lab-readout");
-  details.append(node("h2", "How the decision was made"));
+  forecast.append(metrics);
+  const details = section("How the system works");
   const trace = node("ol", undefined, "model-trace");
   stage(trace, "Market trigger", "Robust z-score " + data.trigger.robust_z +
     ". " + (data.trigger.active ? "Threshold crossed." : "Below the opening threshold."));
@@ -172,11 +215,18 @@ function render(data) {
       : data.phase === "deadline"
         ? "Review the outstanding option. The system took no new commitment or release action."
         : actions[data.selected_action] + ". The system will only consider a commitment after supplier evidence is verified.");
-  details.append(trace, node("h3", "Candidate eligibility"), candidateTable(data));
+  details.append(trace);
+  const candidates = section("Candidate comparison",
+    "Policy weights show how the model ranks eligible actions. Downside is the average modeled loss in the worst 10% of outcomes.");
+  candidates.append(candidateTable(data));
+  const panels = [verdict, explanation, forecast, details, candidates];
   if (data.skill_reviews?.length) {
-    details.append(node("h3", "Domain and company skill review"), skillTable(data.skill_reviews));
+    const skills = section("Domain and company skill review",
+      "Advisory estimates from the simulator and learned models.");
+    skills.append(skillTable(data.skill_reviews));
+    panels.push(skills);
   }
-  $("#result").replaceChildren(verdict, metrics, details);
+  $("#result").replaceChildren(...panels);
   previous = data;
 }
 

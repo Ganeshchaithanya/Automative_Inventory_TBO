@@ -40,7 +40,7 @@ $env:ASCIS_PORT = '8081'
 python -m ascis.web
 ```
 
-Open [the storefront](http://127.0.0.1:8081/) to browse current demo stock by destination, property and stay dates. The fictional properties have initial demo stock so the catalog is populated before any new proposal is approved.
+Open [Avoflare Stays](http://127.0.0.1:8081/) to browse current demo stock by destination, property and stay dates. The fictional properties have initial demo stock so the catalog is populated before any new proposal is approved.
 
 Open [the operations demo](http://127.0.0.1:8083/) for the model and inventory impact view or [the approval inbox](http://127.0.0.1:8083/approvals) to review the agent’s requests. The two sites share a local SQLite ledger under `runs/`. On startup, the trained checkpoint evaluates the demo markets and queues proposals that require approval. Each proposal has a downloadable PDF bound to its exact terms. Accepting adds the firm quantity to the storefront. Declining leaves stock as-is.
 
@@ -63,3 +63,9 @@ The Impact view lists curated event and historical facts with source links. The 
 In Scenario Lab, choose Missing, Expired, or Conflicting supplier evidence. When the opening trigger fires, the workflow requests terms and skips PPO. At the option deadline it abstains and flags the option for review. Test these paths with `python -m ascis.evaluation`. Independent public context remains visible while supplier evidence is under review.
 
 The storefront and approval inbox are for local use with the Python/PyTorch checkpoint. The demo performs no payment or supplier reservation. Use the CLI replays for the internal option deadline and volatility scenarios.
+
+## Hosted demo
+
+Publish the repository as `Automative_Inventory_TBO`. The Render Blueprint uses the same service name and serves the operations site. The `avoflare-stays` Vercel project serves the storefront. Set `ASCIS_OPERATIONS_URL` on Vercel to the Render origin and `ASCIS_STOREFRONT_URL` on Render to the Vercel origin.
+
+The storefront forwards catalog and booking requests to Render so both sites share one simulated inventory ledger. The free Render configuration uses temporary storage. Restarts and redeploys can reset demo bookings and approvals. The hosted operations site is a shared demo with an accessible reset control.

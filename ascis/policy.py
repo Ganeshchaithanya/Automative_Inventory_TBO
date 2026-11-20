@@ -34,6 +34,11 @@ class ActorCritic(nn.Module):
         distribution, _ = self(torch.tensor(analysis.features), torch.tensor(analysis.mask))
         return Action(int(distribution.logits.argmax()))
 
+    @torch.no_grad()
+    def action_weights(self, analysis: Analysis) -> dict[str, float]:
+        distribution, _ = self(torch.tensor(analysis.features), torch.tensor(analysis.mask))
+        return {action.name: float(distribution.probs[action]) for action in Action if analysis.mask[action]}
+
 
 @dataclass
 class MarketBatch:

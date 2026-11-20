@@ -10,6 +10,7 @@ let spotlightId = null;
 let spotlightTimer;
 let slideStarted = 0;
 const dayMs = 86_400_000;
+const retryBookings = new Map();
 
 function node(tag, value, className) {
   const result = document.createElement(tag);
@@ -34,16 +35,18 @@ function button(text, style, callback) {
 }
 
 function shortDate(value) {
-  return new Date(value + "T12:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
+  return new Date(value + "T00:00:00Z").toLocaleDateString("en-GB", {
+    day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+  });
 }
 
-function showHotel(hotel) {
+function showHotel(hotel, product = offer) {
   openHotel = hotel.id;
-  renderHotelDetail(hotel);
+  renderHotelDetail(hotel, product);
   $("#hotel-dialog").showModal();
 }
 
-function renderHotelDetail(hotel) {
+function renderHotelDetail(hotel, product) {
   const content = node("div", undefined, "dialog-body");
   const title = node("h2", hotel.name);
   title.id = "detail-title";
@@ -54,16 +57,47 @@ function renderHotelDetail(hotel) {
     node("p", hotel.description),
     node("p", "Demo stay dates: " + shortDate(hotel.available_from) + " to " + shortDate(hotel.available_until)),
     stock,
-    node("p", offer === "package" ? "Includes the hotel stay and one-way airport transfer per room." : hotel.amenities.join(" · ")),
-    bookingForm(hotel, offer),
+    node("p", product === "package" ? "Includes the hotel stay and one-way airport transfer per room." : hotel.amenities.join(" · ")),
+    bookingForm(hotel, product),
   );
   const origin = $("#origin").value.trim();
   if (origin) stock.before(node("p", "Trip from " + origin + " to " + hotel.destination));
   $("#hotel-detail").replaceChildren(photo(hotel.hotel_image, "Illustrative photo of " + hotel.name), content);
 }
 
+function pendingBooking(key) {
+  if (retryBookings.has(key)) return retryBookings.get(key);
+  try { return JSON.parse(sessionStorage.getItem(key)); } catch { return null; }
+}
+
+function renderBookingRecovery() {
+  const panel = $("#booking-recovery");
+  const entries = [];
+  for (const hotel of hotels) {
+    for (const product of ["hotel", "package"]) {
+      if (!pendingBooking(`booking:${demoRevision}:${hotel.id}:${product}`)) continue;
+      entries.push(button("Recover " + hotel.name + (product === "package" ? " package" : " stay"), "outline",
+        () => showHotel(hotel, product)));
+    }
+  }
+  panel.hidden = !entries.length;
+  panel.replaceChildren(...entries);
+}
+
 function bookingForm(hotel, product) {
   const bookingRevision = demoRevision ?? 0;
+  const retryKey = `booking:${bookingRevision}:${hotel.id}:${product}`;
+  let pending = pendingBooking(retryKey);
+  function savePending(selection) {
+    pending = selection;
+    if (selection) retryBookings.set(retryKey, selection);
+    else retryBookings.delete(retryKey);
+    try {
+      if (selection) sessionStorage.setItem(retryKey, JSON.stringify(selection));
+      else sessionStorage.removeItem(retryKey);
+    } catch { /* Storage is optional for same-page retries. */ }
+    renderBookingRecovery();
+  }
   const form = node("form", undefined, "booking-form");
   function field(name, type, value, min, max) {
     const label = node("label", name);
@@ -75,20 +109,32 @@ function bookingForm(hotel, product) {
   }
   const firstAvailable = Object.keys(hotel.rooms_by_date).find((day) =>
     hotel.rooms_by_date[day] > 0 && (product === "hotel" || hotel.transfers_by_date[day] > 0));
-  const start = field("Check-in", "date", $("#check-in").value || firstAvailable || hotel.available_from,
+  const start = field("Check-in", "date", pending?.check_in || $("#check-in").value || firstAvailable || hotel.available_from,
     hotel.available_from, hotel.available_until);
-  const initialOut = $("#check-out").value || new Date(Date.parse(start.value) + dayMs).toISOString().slice(0, 10);
+  const initialOut = pending?.check_out || $("#check-out").value || new Date(Date.parse(start.value) + dayMs).toISOString().slice(0, 10);
   const end = field("Check-out", "date", initialOut, hotel.available_from, hotel.available_until);
-  const rooms = field("Rooms", "number", "1", "1", "12");
+  const rooms = field("Rooms", "number", String(pending?.rooms || 1), "1", "12");
   const quote = node("p", undefined, "quote");
   const message = node("p", undefined, "booking-message");
   message.setAttribute("role", "status");
   const submit = node("button", "Create demo booking", "button emerald");
   submit.type = "submit";
-  form.append(quote, submit, message);
+  const receiptPanel = node("div", undefined, "booking-receipt");
+  receiptPanel.hidden = true;
+  form.append(quote, submit, message, receiptPanel);
+  let sending = false;
+  let recorded = false;
 
   function estimate() {
-    if (start.disabled) return;
+    if (sending || recorded) return;
+    for (const field of [start, end, rooms]) field.disabled = Boolean(pending);
+    if (pending) {
+      quote.textContent = "A confirmation is pending for these dates. Retry to get the result of the same request.";
+      submit.textContent = "Retry booking confirmation";
+      submit.disabled = false;
+      return;
+    }
+    submit.textContent = "Create demo booking";
     const current = hotels.find((item) => item.id === hotel.id) || hotel;
     const nights = (Date.parse(end.value) - Date.parse(start.value)) / dayMs;
     const count = Number(rooms.value);
@@ -104,40 +150,61 @@ function bookingForm(hotel, product) {
       " × " + nights + (nights === 1 ? " night" : " nights");
     submit.disabled = !valid || !roomsAvailable || !transferAvailable;
   }
-  let lastPayload = "";
-  let lastId;
+  start.addEventListener("input", () => {
+    if (start.value && (!end.value || end.value <= start.value) && start.value < hotel.available_until) {
+      end.value = new Date(Date.parse(start.value) + dayMs).toISOString().slice(0, 10);
+    }
+  });
   form.addEventListener("input", estimate);
   form.addEventListener("catalogchange", estimate);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    if (Date.parse(start.value) >= Date.parse(end.value)) return;
-    const selection = {
+    if (sending || recorded || (!pending && submit.disabled)) return;
+    const selection = pending || {
       hotel_id: hotel.id, offer: product, check_in: start.value, check_out: end.value, rooms: Number(rooms.value),
       origin: $("#origin").value.trim(),
       demo_revision: bookingRevision,
+      request_id: crypto.randomUUID(),
     };
-    const fingerprint = JSON.stringify(selection);
-    if (lastPayload !== fingerprint) {
-      lastPayload = fingerprint;
-      lastId = crypto.randomUUID();
-    }
+    savePending(selection);
+    sending = true;
+    message.textContent = "";
+    submit.textContent = "Checking availability…";
     submit.disabled = true;
     for (const field of [start, end, rooms]) field.disabled = true;
     try {
       const response = await fetch("/api/bookings", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...selection, request_id: lastId }),
+        body: JSON.stringify(selection),
       });
       const receipt = await response.json();
-      if (!response.ok) throw new Error(typeof receipt.detail === "string" ? receipt.detail : "Check the booking details.");
-      message.textContent = "Demo booking " + receipt.reference + " · " + currency.format(receipt.subtotal_inr) + " total.";
+      if (!response.ok) {
+        if (response.status >= 400 && response.status < 500) {
+          savePending(null);
+          throw new Error(typeof receipt.detail === "string" ? receipt.detail : "Check the booking details and try again.");
+        }
+        throw new Error("Booking confirmation is temporarily unavailable. Retry the same request.");
+      }
+      if (!receipt.reference || !receipt.nights?.length) throw new Error("Retry to recover the booking reference.");
+      savePending(null);
+      recorded = true;
+      message.textContent = "Demo booking confirmed. Reference " + receipt.reference + ".";
+      quote.hidden = true;
+      receiptPanel.append(
+        node("strong", receipt.hotel + " · " + (receipt.offer === "package" ? "Hotel + transfer" : "Hotel only")),
+        node("p", shortDate(receipt.nights[0]) + " to " + shortDate(receipt.check_out) + " · " +
+          amount.format(receipt.room_nights) + " room-nights"),
+        node("p", currency.format(receipt.subtotal_inr) + " demo total"),
+      );
+      receiptPanel.hidden = false;
       submit.textContent = "Demo booking recorded";
       await refresh();
     } catch (error) {
-      message.textContent = error.message;
-      for (const field of [start, end, rooms]) field.disabled = false;
+      message.textContent = pending ? "The booking result is uncertain. Retry to recover the same confirmation." : error.message;
+    } finally {
+      sending = false;
       estimate();
-      await refresh();
+      if (!recorded) await refresh();
     }
   });
   estimate();
@@ -180,6 +247,8 @@ function renderStays({ scroll = false } = {}) {
   $("#search-error").textContent = "";
   if ((start || end) && (!start || !end || start >= end)) {
     $("#search-error").textContent = "Enter both dates with check-out after check-in.";
+    $("#hotel-grid").replaceChildren();
+    $("#result-count").textContent = "";
     return;
   }
   const matches = [];
@@ -328,13 +397,18 @@ for (const control of document.querySelectorAll("[data-offer]")) {
   });
 }
 
+let catalogRequest = 0;
+let appliedCatalog = 0;
 async function refresh() {
+  const request = ++catalogRequest;
   try {
     const response = await fetch("/api/catalog", { cache: "no-store" });
     if (!response.ok) throw new Error("The hotel collection is unavailable.");
     const data = await response.json();
+    if (request < appliedCatalog) return;
     const revision = Number(response.headers.get("X-ASCIS-Demo-Revision"));
     if (demoRevision !== null && revision < demoRevision) return;
+    appliedCatalog = request;
     if (demoRevision !== null && revision > demoRevision) {
       if ($("#hotel-dialog").open) $("#hotel-dialog").close();
       $("#search").reset();
@@ -352,6 +426,7 @@ async function refresh() {
     catalogSnapshot = snapshot;
     hotels = data;
     renderStays();
+    renderBookingRecovery();
     renderDestinations();
     renderSpotlight();
     if ($("#hotel-dialog").open && openHotel) {

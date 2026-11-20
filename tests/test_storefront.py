@@ -1,6 +1,7 @@
 """Keep unapproved and optional allocations out of the published inventory."""
 
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date
 import tempfile
 import unittest
@@ -23,6 +24,51 @@ class OfferPolicy:
 
 
 class StorefrontTests(unittest.TestCase):
+    def test_seat_and_room_capacity_survive_racing_requests_and_retries(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(web, "LEDGER", Path(directory) / "bookings.sqlite"):
+            web.prepare_ledger()
+            hotel = next(item for item in web.catalog() if item["id"] == "icc")
+            first, second = map(date.fromisoformat, sorted(hotel["rooms_by_date"])[:2])
+            booking = web.Booking(request_id=uuid4(), hotel_id="icc", offer="hotel", check_in=first,
+                                  check_out=second, rooms=12)
+            rival = booking.model_copy(update={"request_id": uuid4(), "offer": "package"})
+
+            def submit(request):
+                try:
+                    return web.book(request)
+                except HTTPException as error:
+                    return error.status_code
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(submit, (booking, rival)))
+            self.assertIn(409, results)
+            winner = next(index for index, result in enumerate(results) if isinstance(result, dict))
+            receipt = results[winner]
+            self.assertEqual(submit((booking, rival)[winner]), receipt)
+            live = next(item for item in web.catalog() if item["id"] == "icc")
+            self.assertEqual(live["rooms_by_date"][first.isoformat()], hotel["rooms_by_date"][first.isoformat()] - 12)
+            consumed_transfers = 12 if winner == 1 else 0
+            self.assertEqual(live["transfers_by_date"][first.isoformat()], 24 - consumed_transfers)
+
+    def test_transfer_sellout_still_allows_hotel_only_checkout(self):
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            patch.object(web, "LEDGER", Path(directory) / "transfers.sqlite"),
+            patch.object(web, "approved_allocations", return_value={"India vs Pakistan · Cricket World Cup": (300, 1_080_000)}),
+        ):
+            web.prepare_ledger()
+            hotel = next(item for item in web.catalog() if item["id"] == "icc")
+            first, second = map(date.fromisoformat, sorted(hotel["rooms_by_date"])[:2])
+            package = web.Booking(request_id=uuid4(), hotel_id="icc", offer="package", check_in=first,
+                                  check_out=second, rooms=12)
+            web.book(package)
+            web.book(package.model_copy(update={"request_id": uuid4()}))
+            with self.assertRaises(HTTPException) as rejected:
+                web.book(package.model_copy(update={"request_id": uuid4(), "rooms": 1}))
+            self.assertIn("transfers", rejected.exception.detail)
+            room = web.book(package.model_copy(update={"request_id": uuid4(), "offer": "hotel", "rooms": 1}))
+            self.assertEqual(room["subtotal_inr"], 4_000)
+
     def test_bengaluru_selection_survives_restart_and_only_publishes_after_approval(self):
         demand, _ = fit_demand()
         checkpoint = (OfferPolicy(), demand, CompanyPolicy(), {})

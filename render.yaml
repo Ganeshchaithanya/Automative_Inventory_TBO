@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: Automative_Inventory_TBO
+    runtime: python
+    plan: free
+    buildCommand: pip install --index-url https://download.pytorch.org/whl/cpu torch && pip install -r requirements.txt
+    startCommand: uvicorn ascis.hosted:app --host 0.0.0.0 --port "$PORT"
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: ASCIS_CHECKPOINT
+        value: deploy/models/policy.pt
+      - key: ASCIS_SKILLS_CHECKPOINT
+        value: deploy/models/dual-skills.pt
+      - key: ASCIS_LEDGER
+        value: /tmp/ascis-ledger.sqlite
+      - key: ASCIS_STOREFRONT_URL
+        sync: false
+      - key: OMP_NUM_THREADS
+        value: "1"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"

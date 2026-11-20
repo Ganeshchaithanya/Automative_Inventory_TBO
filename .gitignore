@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 runs/
 output/
+dist/
+.vercel/
 .env
 .env.*

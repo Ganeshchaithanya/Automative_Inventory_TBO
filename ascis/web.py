@@ -127,7 +127,8 @@ async def start_server(app: FastAPI):
     if not checkpoint.is_file():
         raise RuntimeError("Run python -m ascis train before starting the website.")
     app.state.checkpoint = load(checkpoint)
-    app.state.skills = load_skills(ROOT / "runs" / "dual-skills.pt", checkpoint)
+    skills_path = Path(os.getenv("ASCIS_SKILLS_CHECKPOINT", str(ROOT / "runs" / "dual-skills.pt")))
+    app.state.skills = load_skills(skills_path, checkpoint)
     prepare_ledger()
     prepare_agent_requests()
     app.state.market_evidence = {}
@@ -140,9 +141,12 @@ async def start_server(app: FastAPI):
 
 
 app = FastAPI(title="ASCIS Demo", lifespan=start_server, docs_url=None, redoc_url=None, openapi_url=None)
-storefront = FastAPI(title="ASCIS Stays", docs_url=None, redoc_url=None, openapi_url=None)
+storefront = FastAPI(title="Avoflare Stays", docs_url=None, redoc_url=None, openapi_url=None)
+allowed_hosts = ["127.0.0.1", "localhost", "testserver"]
+if hosted_name := os.getenv("RENDER_EXTERNAL_HOSTNAME"):
+    allowed_hosts.append(hosted_name)
 for site in (app, storefront):
-    site.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+    site.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
     site.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
 ACTIVE: dict[str, DecisionRun] = {}
 LOCK = Lock()
@@ -211,6 +215,7 @@ def run_scenario(body: Scenario):
     review_status = None
     if body.queue_for_review and not at_deadline and analysis.candidates[action].units:
         review_status = queue_scenario(body, event, observation, analysis, action, company)
+    action_weights = model.action_weights(analysis) if actor_ran and hasattr(model, "action_weights") else {}
     return {
         "event_id": event["id"], "event": event["title"], "market": event["destination"],
         "phase": body.phase, "trigger": market_trigger,
@@ -218,6 +223,8 @@ def run_scenario(body: Scenario):
         "supplier_evidence": evidence,
         "existing_room_nights": assessment["existing_room_nights"],
         "option_open": position.option_open, "cash_headroom": company.budget - position.committed_cash,
+        "budget": company.budget, "downside_limit": company.downside_limit,
+        "action_weights": action_weights,
         "forecast": assessment["forecast_room_nights"], "forecast_skill": assessment["domain_skills"][1],
         "selected_action": action.name, "actor_ran": actor_ran,
         "candidates": assessment["counterfactuals"], "fit": training.get("fit", {}),
@@ -230,6 +237,8 @@ def run_scenario(body: Scenario):
 
 @app.get("/storefront")
 def storefront_link():
+    if storefront_url := os.getenv("ASCIS_STOREFRONT_URL"):
+        return RedirectResponse(storefront_url)
     public_port = int(os.getenv("ASCIS_PORT", "8080"))
     return RedirectResponse(f"http://127.0.0.1:{public_port}/")
 
@@ -698,7 +707,8 @@ def impact():
     with LOCK, closing(sqlite3.connect(LEDGER)) as connection:
         connection.execute("BEGIN")
         revision = demo_revision(connection)
-        approved, bookings = approved_stock(connection), booking_receipts(connection)
+        allocations, bookings = approved_allocations(connection), booking_receipts(connection)
+        approved = {title: units for title, (units, _) in allocations.items()}
         declined = declined_markets(connection)
         rows = []
         for hotel in listings(approved, bookings):
@@ -716,7 +726,8 @@ def impact():
                 "event_active": event_active,
                 "available": hotel["stock"], "added": added, "sold": sold,
                 "revenue": revenue, "gross_margin_on_sold": revenue - realized_cost,
-                "committed_cost": added * UNIT_COST, "unit_cost": UNIT_COST, "night_rate": hotel["price"],
+                "committed_cost": allocations.get(hotel["event"], (0, 0))[1],
+                "unit_cost": UNIT_COST, "night_rate": hotel["price"],
                 "transfer_rate": TRANSFER_PRICE,
                 "policy_action": active.action.name if active else None,
                 "policy_stage": active.observation.day if active else None,
