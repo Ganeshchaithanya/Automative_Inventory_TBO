@@ -114,8 +114,13 @@ function renderCart() {
   const count = cart.items.length;
   const itemCount = amount.format(count) + (count === 1 ? " item" : " items");
   const confirmed = count === 0 ? cartReceipt : null;
+  const rooms = cart.items.reduce((total, item) => total + item.rooms, 0);
+  const roomSummary = amount.format(rooms) + (rooms === 1 ? " room" : " rooms");
+  const roomCount = $("#cart-room-count");
   $("#cart-count").textContent = amount.format(count);
-  $("#open-cart").setAttribute("aria-label", "Cart, " + itemCount);
+  roomCount.textContent = roomSummary;
+  roomCount.hidden = count === 0;
+  $("#open-cart").setAttribute("aria-label", "Cart, " + itemCount + (count ? ", " + roomSummary : ""));
   const title = $("#cart-title");
   const heading = confirmed ? "Booking confirmed" : "Booking cart · " + itemCount;
   if (title.textContent !== heading) title.textContent = heading;

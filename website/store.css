@@ -89,8 +89,9 @@ dialog form{padding-top:0}
 .booking-receipt p{margin:4px 0 0}
 .booking-message:empty{display:none}
 .booking-recovery:not([hidden]){display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
-.cart-launch{justify-self:end;white-space:nowrap;gap:7px}
+.cart-launch{justify-self:end;white-space:nowrap}
 .cart-count{display:inline-grid;place-items:center;min-width:1.6em;padding:0 .32em;border-radius:999px;background:var(--emerald);color:white;font-variant-numeric:tabular-nums}
+.cart-room-count:not([hidden]){display:block;margin-top:3px;font-size:.75rem;font-weight:600;color:var(--muted)}
 #cart-dialog{width:min(660px,calc(100% - 25px));max-height:90vh}
 #cart-items{display:grid;gap:12px;margin:12px 0}
 .cart-line{display:grid;grid-template-columns:1fr auto;gap:6px 12px;border:1px solid var(--line);border-radius:9px;padding:13px}
