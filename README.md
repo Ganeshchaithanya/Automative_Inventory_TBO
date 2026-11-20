@@ -36,10 +36,11 @@ See [the architecture plan](TBO-architecture-and-build-plan.md) for the full des
 python -m pip install -r requirements.txt
 python -m ascis train
 python -m ascis.skills
+$env:ASCIS_PORT = '8081'
 python -m ascis.web
 ```
 
-Open [the storefront](http://127.0.0.1:8080) to browse current demo stock by destination, property and stay dates. The fictional properties have initial demo stock so the catalog is populated before any new proposal is approved.
+Open [the storefront](http://127.0.0.1:8081/) to browse current demo stock by destination, property and stay dates. The fictional properties have initial demo stock so the catalog is populated before any new proposal is approved.
 
 Open [the operations demo](http://127.0.0.1:8083/) for the model and inventory impact view or [the approval inbox](http://127.0.0.1:8083/approvals) to review the agent’s requests. The two sites share a local SQLite ledger under `runs/`. On startup, the trained checkpoint evaluates the demo markets and queues proposals that require approval. Each proposal has a downloadable PDF bound to its exact terms. Accepting adds the firm quantity to the storefront. Declining leaves stock as-is.
 
@@ -62,13 +63,3 @@ The Impact view lists curated event and historical facts with source links. The 
 In Scenario Lab, choose Missing, Expired, or Conflicting supplier evidence. When the opening trigger fires, the workflow requests terms and skips PPO. At the option deadline it abstains and flags the option for review. Test these paths with `python -m ascis.evaluation`. Independent public context remains visible while supplier evidence is under review.
 
 The storefront and approval inbox are for local use with the Python/PyTorch checkpoint. The demo performs no payment or supplier reservation. Use the CLI replays for the internal option deadline and volatility scenarios.
-
-## Deploy the two demo sites
-
-The GitHub repository and Render service are named `Automative_Inventory_TBO`. Render hosts the operations site at `/impact`, `/approvals`, and `/scenarios`. The `tbo-storefront` Vercel project serves the storefront and forwards its catalog and booking endpoints to Render. Both sites use the same simulated inventory ledger.
-
-1. Push this repository to GitHub and import it as a [Render Blueprint](https://dashboard.render.com/blueprints). Set `ASCIS_STOREFRONT_URL` to the intended Vercel project URL when prompted. The Blueprint loads the checked-in synthetic checkpoints and checks `/healthz` after startup.
-2. Import the same repository as a [Vercel project](https://vercel.com/new), using the root directory. Name it `tbo-storefront` and set `ASCIS_OPERATIONS_URL` to the origin assigned by Render. Vercel builds the storefront with `vercel.json`.
-3. Update `ASCIS_STOREFRONT_URL` in Render if Vercel assigns a different hostname. Verify the storefront offers load, then approve a demo allocation on Render and check that the storefront inventory reflects it.
-
-The default Render Blueprint uses the Free plan and stores the shared demo ledger in `/tmp`. A redeploy or instance replacement can reset approvals and bookings. The hosted demo is a shared simulation and people with the operations link can reset it. The checked-in weights contain synthetic training results. The local ledger and local reports are excluded from Git.

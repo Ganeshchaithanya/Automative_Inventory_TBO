@@ -2,8 +2,6 @@ __pycache__/
 .pytest_cache/
 .venv/
 runs/
-dist/
 output/
-.vercel/
 .env
 .env.*

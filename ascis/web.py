@@ -127,8 +127,7 @@ async def start_server(app: FastAPI):
     if not checkpoint.is_file():
         raise RuntimeError("Run python -m ascis train before starting the website.")
     app.state.checkpoint = load(checkpoint)
-    skills_checkpoint = Path(os.getenv("ASCIS_SKILLS_CHECKPOINT", str(ROOT / "runs" / "dual-skills.pt")))
-    app.state.skills = load_skills(skills_checkpoint, checkpoint)
+    app.state.skills = load_skills(ROOT / "runs" / "dual-skills.pt", checkpoint)
     prepare_ledger()
     prepare_agent_requests()
     app.state.market_evidence = {}
@@ -142,12 +141,8 @@ async def start_server(app: FastAPI):
 
 app = FastAPI(title="ASCIS Demo", lifespan=start_server, docs_url=None, redoc_url=None, openapi_url=None)
 storefront = FastAPI(title="ASCIS Stays", docs_url=None, redoc_url=None, openapi_url=None)
-configured_hosts = os.getenv("ASCIS_ALLOWED_HOSTS", "").split(",")
-allowed_hosts = ["127.0.0.1", "localhost", "testserver"] + [host.strip() for host in configured_hosts if host.strip()]
-if render_host := os.getenv("RENDER_EXTERNAL_HOSTNAME"):
-    allowed_hosts.append(render_host)
 for site in (app, storefront):
-    site.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+    site.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
     site.mount("/assets", StaticFiles(directory=ASSETS), name="assets")
 ACTIVE: dict[str, DecisionRun] = {}
 LOCK = Lock()
@@ -235,8 +230,6 @@ def run_scenario(body: Scenario):
 
 @app.get("/storefront")
 def storefront_link():
-    if public_url := os.getenv("ASCIS_STOREFRONT_URL"):
-        return RedirectResponse(public_url)
     public_port = int(os.getenv("ASCIS_PORT", "8080"))
     return RedirectResponse(f"http://127.0.0.1:{public_port}/")
 
