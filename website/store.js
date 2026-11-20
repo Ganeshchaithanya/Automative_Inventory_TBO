@@ -16,6 +16,7 @@ let cart = { revision: null, items: [], pending: null };
 try { cart = JSON.parse(sessionStorage.getItem(cartStorageKey)) || cart; } catch { /* Start with an empty cart. */ }
 let cartSending = false;
 let cartReceipt;
+const cartControls = new WeakMap();
 
 function node(tag, value, className) {
   const result = document.createElement(tag);
@@ -97,6 +98,55 @@ function groupQuote(hotel, item) {
     total: (nights * hotel.price + (transfers ? hotel.transfer_price : 0)) * item.rooms };
 }
 
+function copyAvailability(hotel) {
+  return { ...hotel, rooms_by_date: { ...hotel.rooms_by_date }, transfers_by_date: { ...hotel.transfers_by_date } };
+}
+
+function applyCartItem(hotel, item, dates) {
+  for (const day of dates) hotel.rooms_by_date[day] -= item.rooms;
+  if (item.offer === "package") hotel.transfers_by_date[item.check_in] -= item.rooms;
+}
+
+function remainingCartStock(hotel) {
+  const remaining = copyAvailability(hotel);
+  for (const item of cart.items) {
+    if (item.hotel_id !== hotel.id) continue;
+    const quote = groupQuote(remaining, item);
+    if (item.rooms <= quote.capacity) applyCartItem(remaining, item, quote.dates);
+  }
+  return remaining;
+}
+
+function cartLineControls(item) {
+  if (cartControls.has(item)) return cartControls.get(item);
+  const row = node("article", undefined, "cart-line");
+  const title = node("h3");
+  const dates = node("p", (item.offer === "package" ? "Hotel + transfer" : "Hotel only") + " · " +
+    shortDate(item.check_in) + " to " + shortDate(item.check_out));
+  const price = node("p");
+  const quantity = node("input");
+  Object.assign(quantity, { type: "number", min: "1", step: "1", required: true, value: String(item.rooms) });
+  quantity.addEventListener("input", () => {
+    if (cart.pending || cartSending) return;
+    if (quantity.validity.valid && Number.isSafeInteger(quantity.valueAsNumber)) {
+      item.rooms = quantity.valueAsNumber;
+    }
+    $("#cart-message").textContent = "";
+    saveCart();
+  });
+  const remove = button("Remove", "outline", () => {
+    const index = cart.items.indexOf(item);
+    if (index < 0 || cart.pending || cartSending) return;
+    cart.items.splice(index, 1);
+    $("#cart-message").textContent = "";
+    saveCart();
+  });
+  row.append(title, dates, price, quantity, remove);
+  const controls = { row, title, price, quantity, remove };
+  cartControls.set(item, controls);
+  return controls;
+}
+
 function saveCart() {
   try { sessionStorage.setItem(cartStorageKey, JSON.stringify(cart)); } catch { /* Keep the current tab usable. */ }
   renderCart();
@@ -118,8 +168,10 @@ function renderCart() {
   const roomSummary = amount.format(rooms) + (rooms === 1 ? " room" : " rooms");
   const roomCount = $("#cart-room-count");
   $("#cart-count").textContent = amount.format(count);
-  roomCount.textContent = roomSummary;
-  roomCount.hidden = count === 0;
+  if (roomCount) {
+    roomCount.textContent = roomSummary;
+    roomCount.hidden = count === 0;
+  }
   $("#open-cart").setAttribute("aria-label", "Cart, " + itemCount + (count ? ", " + roomSummary : ""));
   const title = $("#cart-title");
   const heading = confirmed ? "Booking confirmed" : "Booking cart · " + itemCount;
@@ -128,49 +180,26 @@ function renderCart() {
   checkout.textContent = cartSending ? "Checking inventory…" :
     cart.pending ? "Retry cart confirmation" : "Confirm demo bookings";
   checkout.hidden = cart.items.length === 0;
-  const available = new Map(hotels.map((hotel) => [hotel.id, {
-    ...hotel, rooms_by_date: { ...hotel.rooms_by_date }, transfers_by_date: { ...hotel.transfers_by_date },
-  }]));
+  const available = new Map(hotels.map((hotel) => [hotel.id, copyAvailability(hotel)]));
   let total = 0;
   let valid = cart.items.length > 0;
   const rows = cart.items.map((item, index) => {
     const hotel = available.get(item.hotel_id);
     const quote = hotel ? groupQuote(hotel, item) : { capacity: 0, total: 0 };
-    const fits = item.rooms <= quote.capacity;
+    const { row, title, price, quantity, remove } = cartLineControls(item);
+    const quantityValid = !editable || (quantity.validity.valid && Number.isSafeInteger(quantity.valueAsNumber));
+    const fits = quantityValid && item.rooms <= quote.capacity;
     valid &&= fits;
     total += quote.total;
-    if (fits) {
-      for (const day of quote.dates) hotel.rooms_by_date[day] -= item.rooms;
-      if (item.offer === "package") hotel.transfers_by_date[item.check_in] -= item.rooms;
-    }
-    const title = hotel?.name || "Unavailable property";
-    const row = node("article", undefined, "cart-line");
-    const quantity = node("input");
-    Object.assign(quantity, { type: "number", min: "1", step: "1", value: String(item.rooms), disabled: !editable });
-    quantity.setAttribute("aria-label", "Rooms for cart item " + (index + 1) + ", " + title);
-    quantity.addEventListener("change", () => {
-      if (!Number.isSafeInteger(quantity.valueAsNumber) || quantity.valueAsNumber < 1) {
-        quantity.value = String(item.rooms);
-        return;
-      }
-      item.rooms = quantity.valueAsNumber;
-      $("#cart-message").textContent = "";
-      saveCart();
-    });
-    const remove = button("Remove", "outline", () => {
-      cart.items.splice(index, 1);
-      $("#cart-message").textContent = "";
-      saveCart();
-    });
+    if (fits) applyCartItem(hotel, item, quote.dates);
+    const name = hotel?.name || "Unavailable property";
+    title.textContent = (index + 1) + ". " + name;
+    quantity.setAttribute("aria-label", "Rooms for cart item " + (index + 1) + ", " + name);
+    quantity.disabled = !editable;
     remove.disabled = !editable;
-    row.append(
-      node("h3", (index + 1) + ". " + title),
-      node("p", (item.offer === "package" ? "Hotel + transfer" : "Hotel only") + " · " +
-        shortDate(item.check_in) + " to " + shortDate(item.check_out)),
-      node("p", editable && !fits ? "Only " + amount.format(quote.capacity) + " rooms fit after earlier cart items." : currency.format(quote.total),
-        editable && !fits ? "cart-warning" : undefined),
-      quantity, remove,
-    );
+    price.classList.toggle("cart-warning", editable && !fits);
+    price.textContent = !quantityValid ? "Enter a whole number of rooms, at least 1." :
+      editable && !fits ? "Only " + amount.format(quote.capacity) + " rooms fit after earlier cart items." : currency.format(quote.total);
     return row;
   });
   if (confirmed) {
@@ -187,8 +216,10 @@ function renderCart() {
     }
     total = confirmed.subtotal_inr;
   }
-  list.replaceChildren(...(rows.length ? rows : [node("p", "Add hotels or packages to build a group booking.")]));
-  totalLabel.textContent = rows.length ? (confirmed ? "Confirmed demo total " : "Estimated demo total ") +
+  if (rows.length !== list.children.length || rows.some((row, index) => list.children[index] !== row)) {
+    list.replaceChildren(...(rows.length ? rows : [node("p", "Add hotels or packages to build a group booking.")]));
+  }
+  totalLabel.textContent = confirmed || valid || cart.pending ? (confirmed ? "Confirmed demo total " : "Estimated demo total ") +
     currency.format(total) : "";
   checkout.disabled = cartSending || (!cart.pending && (!valid || demoRevision === null));
 }
@@ -276,7 +307,7 @@ function bookingForm(hotel, product) {
       return;
     }
     submit.textContent = "Add to cart";
-    const current = hotels.find((item) => item.id === hotel.id) || hotel;
+    const current = remainingCartStock(hotels.find((item) => item.id === hotel.id) || hotel);
     const count = Number(rooms.value);
     const stay = groupQuote(current, { check_in: start.value, check_out: end.value, rooms: count, offer: product });
     const valid = form.checkValidity() && stay.dates.length > 0 && Number.isSafeInteger(count);
@@ -559,9 +590,8 @@ async function refresh() {
     const data = await response.json();
     if (request < appliedCatalog) return;
     const revision = Number(response.headers.get("X-ASCIS-Demo-Revision"));
-    if (demoRevision !== null && revision < demoRevision) return;
     appliedCatalog = request;
-    if (demoRevision !== null && revision > demoRevision) {
+    if (demoRevision !== null && revision !== demoRevision) {
       if ($("#hotel-dialog").open) $("#hotel-dialog").close();
       $("#search").reset();
       offer = "hotel";
@@ -574,9 +604,10 @@ async function refresh() {
     }
     demoRevision = revision;
     if (cart.revision !== revision) {
+      const hadItems = cart.items.length > 0;
       cart = { revision, items: [], pending: null };
       cartReceipt = undefined;
-      $("#cart-message").textContent = "";
+      $("#cart-message").textContent = hadItems ? "The demo inventory was reset. Add your stays again using current availability." : "";
       saveCart();
     }
     const snapshot = JSON.stringify(data);
