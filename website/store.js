@@ -45,11 +45,6 @@ function shortDate(value) {
   });
 }
 
-function windowStock(hotel) {
-  return amount.format(hotel.stock) + " room-nights across the " +
-    Object.keys(hotel.rooms_by_date).length + "-night event window";
-}
-
 function showHotel(hotel, product = offer) {
   openHotel = hotel.id;
   renderHotelDetail(hotel, product);
@@ -60,18 +55,15 @@ function renderHotelDetail(hotel, product) {
   const content = node("div", undefined, "dialog-body");
   const title = node("h2", hotel.name);
   title.id = "detail-title";
-  const stock = node("p", windowStock(hotel));
-  stock.id = "detail-stock";
+  const origin = $("#origin").value.trim();
   content.append(
     node("p", hotel.area + " · " + hotel.destination), title,
     node("p", hotel.description),
     node("p", "Demo stay dates: " + shortDate(hotel.available_from) + " to " + shortDate(hotel.available_until)),
-    stock,
     node("p", product === "package" ? "Includes the hotel stay and one-way airport transfer per room." : hotel.amenities.join(" · ")),
-    bookingForm(hotel, product),
   );
-  const origin = $("#origin").value.trim();
-  if (origin) stock.before(node("p", "Trip from " + origin + " to " + hotel.destination));
+  if (origin) content.append(node("p", "Trip from " + origin + " to " + hotel.destination));
+  content.append(bookingForm(hotel, product));
   $("#hotel-detail").replaceChildren(photo(hotel.hotel_image, "Illustrative photo of " + hotel.name), content);
 }
 
@@ -119,7 +111,11 @@ function renderCart() {
   const list = $("#cart-items");
   const totalLabel = $("#cart-total");
   const checkout = $("#cart-checkout");
-  $("#open-cart").textContent = "Cart (" + cart.items.length + ")";
+  const count = cart.items.length;
+  const itemCount = amount.format(count) + (count === 1 ? " item" : " items");
+  $("#cart-count").textContent = amount.format(count);
+  $("#open-cart").setAttribute("aria-label", "Cart, " + itemCount);
+  $("#cart-title").textContent = "Booking cart · " + itemCount;
   const editable = !cart.pending && !cartSending;
   checkout.textContent = cartSending ? "Checking inventory…" :
     cart.pending ? "Retry cart confirmation" : "Confirm demo bookings";
@@ -247,18 +243,13 @@ function bookingForm(hotel, product) {
   const end = field("Check-out", "date", initialOut, hotel.available_from, hotel.available_until);
   const rooms = field("Rooms", "number", String(pending?.rooms || 1), "1", "");
   const quote = node("p", undefined, "quote");
-  const availability = node("details", undefined, "nightly-stock");
-  availability.open = true;
-  const nightsTitle = node("summary", "Nightly room availability");
-  const nightly = node("ul");
-  availability.append(nightsTitle, nightly);
   const message = node("p", undefined, "booking-message");
   message.setAttribute("role", "status");
   const submit = node("button", "Add to cart", "button emerald");
   submit.type = "submit";
   const receiptPanel = node("div", undefined, "booking-receipt");
   receiptPanel.hidden = true;
-  form.append(quote, availability, submit, message, receiptPanel);
+  form.append(quote, submit, message, receiptPanel);
   let sending = false;
   let recorded = false;
 
@@ -266,7 +257,6 @@ function bookingForm(hotel, product) {
     if (sending || recorded) return;
     for (const field of [start, end, rooms]) field.disabled = Boolean(pending);
     if (pending) {
-      availability.hidden = true;
       quote.textContent = "A confirmation is pending for these dates. Retry to get the result of the same request.";
       submit.textContent = "Retry booking confirmation";
       submit.disabled = false;
@@ -276,20 +266,6 @@ function bookingForm(hotel, product) {
     const current = hotels.find((item) => item.id === hotel.id) || hotel;
     const count = Number(rooms.value);
     const stay = groupQuote(current, { check_in: start.value, check_out: end.value, rooms: count, offer: product });
-    availability.hidden = !stay.dates.length;
-    const rows = stay.dates.map((day) => {
-      const quantity = current.rooms_by_date[day];
-      const row = node("li");
-      row.append(node("span", shortDate(day)), node("strong", amount.format(quantity) + " rooms"));
-      return row;
-    });
-    if (product === "package" && stay.dates.length) {
-      const row = node("li");
-      row.append(node("span", "Airport transfers on arrival"),
-        node("strong", amount.format(current.transfers_by_date[start.value] ?? 0)));
-      rows.push(row);
-    }
-    nightly.replaceChildren(...rows);
     const valid = form.checkValidity() && stay.dates.length > 0 && Number.isSafeInteger(count);
     if (cart.pending) quote.textContent = "Recover your pending cart confirmation before adding more stays.";
     else if (!valid) quote.textContent = "Choose a valid check-in, check-out and room count.";
@@ -315,7 +291,7 @@ function bookingForm(hotel, product) {
         rooms: Number(rooms.value), origin: $("#origin").value.trim(),
       });
       cartReceipt = undefined;
-      $("#cart-message").textContent = "";
+      $("#cart-message").textContent = "Item added to cart.";
       saveCart();
       $("#hotel-dialog").close();
       openCart();
@@ -346,7 +322,6 @@ function bookingForm(hotel, product) {
       recorded = true;
       message.textContent = "Demo booking confirmed. Reference " + receipt.reference + ".";
       quote.hidden = true;
-      availability.hidden = true;
       receiptPanel.append(
         node("strong", receipt.hotel + " · " + (receipt.offer === "package" ? "Hotel + transfer" : "Hotel only")),
         node("p", shortDate(receipt.nights[0]) + " to " + shortDate(receipt.check_out) + " · " +
@@ -368,7 +343,7 @@ function bookingForm(hotel, product) {
   return form;
 }
 
-function card({ hotel, capacity, selectedDates, featured }) {
+function card({ hotel, capacity, featured }) {
   const article = node("article", undefined, "hotel");
   const content = node("div", undefined, "card-body");
   const tags = node("div", undefined, "amenities");
@@ -383,11 +358,11 @@ function card({ hotel, capacity, selectedDates, featured }) {
   footer.append(price, button(packageOffer ? "View package" : "View stay", "outline", () => showHotel(hotel)));
   content.append(
     node("p", hotel.destination, "card-meta"), node("h3", hotel.name),
-    node("p", (selectedDates ? "" : "Up to ") + amount.format(capacity) + " rooms " +
-      (selectedDates ? "available for the selected stay" : "on a single night") +
-      (packageOffer ? " with transfers" : ""), "availability-label"),
-    node("p", windowStock(hotel), "card-meta"),
   );
+  if (capacity !== null) {
+    content.append(node("p", amount.format(capacity) + (capacity === 1 ? " room" : " rooms") +
+      " available for these dates" + (packageOffer ? " with transfers" : ""), "card-meta"));
+  }
   if (hotel.event_active) content.append(node("p", hotel.event, "event-promotion"));
   if (featured) {
     content.append(node("p", amount.format(featured) + " room-nights in the event allocation", "allocation"));
@@ -425,10 +400,9 @@ function renderStays({ scroll = false } = {}) {
     if (!eligible.length) continue;
     const capacity = start
       ? groupQuote(hotel, { check_in: start, check_out: end, offer, rooms: 1 }).capacity
-      : Math.max(...eligible.map((day) => offer === "package"
-        ? Math.min(hotel.rooms_by_date[day], hotel.transfers_by_date[day]) : hotel.rooms_by_date[day]));
+      : null;
     const featured = eligible.reduce((total, day) => total + hotel.acquired_by_date[day], 0);
-    matches.push({ hotel, capacity, selectedDates: Boolean(start), featured });
+    matches.push({ hotel, capacity, featured });
   }
   matches.sort((left, right) => right.featured - left.featured);
   const packageOffer = offer === "package";
@@ -604,7 +578,6 @@ async function refresh() {
     if ($("#hotel-dialog").open && openHotel) {
       const hotel = hotels.find((item) => item.id === openHotel);
       if (hotel) {
-        $("#detail-stock").textContent = windowStock(hotel);
         $("#hotel-detail .booking-form").dispatchEvent(new Event("catalogchange"));
       }
     }
